@@ -6,8 +6,8 @@ adding rows or requiring a recursive Arrow type. `session_id` is run-scoped,
 can repeat, and is not a primary key; neither identifier is synthesized.
 
 This contract targets ATIF v1.0–v1.8. It defines the planned converter output;
-the current implementation provides the schema, core ATIF parsing, and text
-conversion. Image/audio conversion and detailed subagent validation follow separately.
+the current implementation provides core ATIF parsing and text/image/audio
+conversion, with recursive embedded-subagent and reference validation.
 Reference: [Harbor's ATIF RFC at f9f974a](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md).
 
 ## Root fields
@@ -62,7 +62,10 @@ absent even when its child fields are required.
 - Media paths remain unchanged. Resolve relative paths against the source
   document's directory; this library will not fetch, embed, or verify media files.
 - Subagent and continuation references are retained, not dereferenced. Validation
-  will use version-specific rules (pre-v1.7 session refs versus v1.7+ document refs).
+  uses version-specific rules: pre-v1.7 references require session IDs; v1.7+
+  references require a document ID or external path. ID-only references must
+  match an embedded child; child IDs are unique within each parent. Embedded
+  documents undergo the same core, field-type, content, and reference checks.
 - Copied-context steps and deterministic dispatches remain present; conversion
   does not choose which records a training pipeline should use.
 

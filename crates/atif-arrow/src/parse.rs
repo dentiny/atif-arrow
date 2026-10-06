@@ -58,7 +58,7 @@ pub enum StepSource {
     Agent,
 }
 
-/// Text or opaque multimodal parts, to be validated and normalized separately.
+/// Text or ordered multimodal parts; conversion validates their content.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Message {
