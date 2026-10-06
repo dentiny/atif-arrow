@@ -182,7 +182,8 @@ Direct trajectory uploads are optional. A missing `trials/<trial-id>/trajectory.
 may be inside `trials/<trial-id>/trial.tar.gz`; the backend reads archive bytes but
 does not extract them. See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
 Tests use scripted HTTP responses to check encoding, ranges, metadata, errors, and
-Arrow conversion; they do not verify access to an existing live Hub trajectory.
+Arrow conversion. For a verified live read of a public Terminal-Bench trial, see
+[the Harbor Hub example](examples/README.md).
 
 ## Supported types and limitations
 

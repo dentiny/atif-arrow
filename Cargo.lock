@@ -1274,12 +1274,16 @@ dependencies = [
 name = "opendal-service-harborhub"
 version = "0.1.0"
 dependencies = [
+ "arrow-json",
+ "atif-arrow",
  "atif-io",
  "futures",
  "http",
+ "opendal",
  "opendal-core",
  "serde",
  "serde_json",
+ "tokio",
  "url",
 ]
 
