@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use arrow_array::{cast::AsArray, types::UInt64Type};
+
 use futures::{io::Cursor, TryStreamExt};
 
 use arrow_json::{writer::LineDelimited, WriterBuilder};
@@ -80,12 +82,7 @@ async fn reads_whole_json_and_handles_empty_jsonl() {
         TrajectoryReader::new(Cursor::new(&pretty), InputFormat::Json, 10, None).unwrap();
     let batch = reader.next_batch().await.unwrap().unwrap();
     assert_eq!(batch.num_rows(), 1);
-    let raw = batch
-        .column_by_name("raw_json")
-        .unwrap()
-        .as_any()
-        .downcast_ref::<arrow_array::StringArray>()
-        .unwrap();
+    let raw = batch.column_by_name("raw_json").unwrap().as_string::<i32>();
     assert_eq!(raw.value(0), pretty);
     assert!(reader.next_batch().await.unwrap().is_none());
     for input in ["", "\n \t\r\n"] {
@@ -182,16 +179,9 @@ async fn resumes_cancelled_reads_without_losing_partial_documents_or_rows() {
         let indices = batch
             .column_by_name("source_record_index")
             .unwrap()
-            .as_any()
-            .downcast_ref::<arrow_array::UInt64Array>()
-            .unwrap();
+            .as_primitive::<UInt64Type>();
         assert_eq!(indices.value(expected - 1), expected as u64);
-        let raw = batch
-            .column_by_name("raw_json")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<arrow_array::StringArray>()
-            .unwrap();
+        let raw = batch.column_by_name("raw_json").unwrap().as_string::<i32>();
         assert_eq!(raw.value(expected - 1), document);
         if expected == 2 {
             assert_eq!(raw.value(0), format!("{DOCUMENT}\n"));

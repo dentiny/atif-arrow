@@ -1,7 +1,5 @@
-use std::sync::{Arc, Mutex};
-
 use atif_io::{InputFormat, TrajectoryReader};
-use http::{Method, Request, Response, StatusCode};
+use http::{Method, Request, Response};
 use opendal_core::{
     Buffer, ErrorKind, HttpBody, HttpTransport, HttpTransporter, OperationContext, Operator, Result,
 };
@@ -9,114 +7,83 @@ use opendal_service_harborhub::HarborHub;
 
 const DOCUMENT: &str = r#"{"schema_version":"ATIF-v1.8","agent":{"name":"test","version":"1"},"steps":[{"step_id":1,"source":"user","message":"hello"}]}"#;
 
-/// Scripted HTTP transport verifies Harbor requests without contacting a real account.
-#[derive(Clone, Default)]
-struct HubTransport {
-    requests: Arc<Mutex<usize>>,
-    object_error: Option<(StatusCode, &'static str)>,
-    ignore_range: bool,
-    missing_content_range: bool,
-    content_range: Option<&'static str>,
-}
+/// Verifies requests and streams the response supplied by each test.
+struct HubTransport<F>(F);
 
-impl HttpTransport for HubTransport {
+impl<F> HttpTransport for HubTransport<F>
+where
+    F: Fn(Request<Buffer>) -> Response<Buffer> + Send + Sync + Unpin + 'static,
+{
     async fn fetch(&self, req: Request<Buffer>) -> Result<Response<HttpBody>> {
         assert_eq!(req.headers()["apikey"], "publishable-test-key");
-        let mut requests = self.requests.lock().unwrap();
-        let mut response = Response::builder();
         assert!(req.headers().get("authorization").is_none());
-        let body = {
-            assert_eq!(
-                req.uri().path(),
-                "/storage/v1/object/results/trials/%E8%AF%95%E9%AA%8C%3F%23%20%25/trajectory.json"
-            );
-            assert!(req.uri().query().is_none());
-            *requests += 1;
-            if let Some((status, body)) = self.object_error {
-                response = response.status(status);
-                body.into()
-            } else if req.method() == Method::HEAD {
-                response = response
-                    .header("content-length", DOCUMENT.len())
-                    .header("content-type", "application/json");
-                String::new()
-            } else {
-                assert_eq!(req.method(), Method::GET);
-                if let Some(range) = req.headers().get("range").filter(|_| !self.ignore_range) {
-                    let (start, end) = range
-                        .to_str()
-                        .unwrap()
-                        .strip_prefix("bytes=")
-                        .unwrap()
-                        .split_once('-')
-                        .unwrap();
-                    let start: usize = start.parse().unwrap();
-                    let end = if end.is_empty() {
-                        DOCUMENT.len() - 1
-                    } else {
-                        end.parse::<usize>().unwrap().min(DOCUMENT.len() - 1)
-                    };
-                    response = response
-                        .status(StatusCode::PARTIAL_CONTENT)
-                        .header("content-length", end - start + 1);
-                    if !self.missing_content_range {
-                        let normal_range = format!("bytes {start}-{end}/{}", DOCUMENT.len());
-                        response = response
-                            .header("content-range", self.content_range.unwrap_or(&normal_range));
-                    }
-                    DOCUMENT[start..=end].into()
-                } else {
-                    response = response.header("content-length", DOCUMENT.len());
-                    DOCUMENT.into()
-                }
-            }
-        };
-        // Separate response chunks exercise streaming rather than a buffered object response.
+        assert_eq!(
+            req.uri().path(),
+            "/storage/v1/object/results/trials/%E8%AF%95%E9%AA%8C%3F%23%20%25/trajectory.json"
+        );
+        assert!(req.uri().query().is_none());
+        let (parts, body) = (self.0)(req).into_parts();
         let midpoint = body.len() / 2;
-        let chunks = vec![
-            Ok(Buffer::from(body[..midpoint].to_owned())),
-            Ok(Buffer::from(body[midpoint..].to_owned())),
-        ];
-        Ok(response
-            .body(HttpBody::new(futures::stream::iter(chunks), None))
-            .unwrap())
+        // Buffer slices share their bytes; separate chunks exercise streaming.
+        let chunks = [Ok(body.slice(..midpoint)), Ok(body.slice(midpoint..))];
+        Ok(Response::from_parts(
+            parts,
+            HttpBody::new(futures::stream::iter(chunks), None),
+        ))
     }
 }
 
-/// Build the production backend with an isolated test transport and encoded root.
-fn operator(transport: &HubTransport) -> Operator {
+/// Builds the production backend with an isolated response handler and encoded root.
+fn operator(
+    reply: impl Fn(Request<Buffer>) -> Response<Buffer> + Send + Sync + Unpin + 'static,
+) -> Operator {
     let builder = HarborHub::default()
         .endpoint("http://127.0.0.1:1234/")
         .publishable_key("publishable-test-key")
         .root("trials/试验?# %");
     Operator::new(builder).unwrap().with_context(
-        OperationContext::new().with_http_transport(HttpTransporter::new(transport.clone())),
+        OperationContext::new().with_http_transport(HttpTransporter::new(HubTransport(reply))),
     )
+}
+
+/// Creates a response whose body length and media type match its headers.
+fn response(status: u16, body: &'static str) -> Response<Buffer> {
+    Response::builder()
+        .status(status)
+        .header("content-length", body.len())
+        .header("content-type", "application/json")
+        .body(Buffer::from(body))
+        .unwrap()
 }
 
 #[test]
 fn streams_objects_and_ranges_into_existing_arrow_reader() {
     futures::executor::block_on(async {
-        let transport = HubTransport::default();
-        let operator = operator(&transport);
-        let metadata = operator.stat("trajectory.json").await.unwrap();
+        let metadata = operator(|req| {
+            assert_eq!(req.method(), Method::HEAD);
+            let mut reply = response(200, "");
+            reply
+                .headers_mut()
+                .insert("content-length", DOCUMENT.len().into());
+            reply
+        })
+        .stat("trajectory.json")
+        .await
+        .unwrap();
         assert_eq!(metadata.content_length(), DOCUMENT.len() as u64);
         assert_eq!(metadata.content_type(), Some("application/json"));
+
+        let full = operator(|req| {
+            assert_eq!(req.method(), Method::GET);
+            assert!(req.headers().get("range").is_none());
+            response(200, DOCUMENT)
+        });
         assert_eq!(
-            operator.read("trajectory.json").await.unwrap().to_bytes(),
+            full.read("trajectory.json").await.unwrap().to_bytes(),
             DOCUMENT.as_bytes()
         );
-        assert_eq!(
-            operator
-                .read_with("trajectory.json")
-                .range(2..7)
-                .await
-                .unwrap()
-                .to_bytes(),
-            &DOCUMENT.as_bytes()[2..7]
-        );
         let mut reader = TrajectoryReader::open(
-            &operator,
+            &full,
             "trajectory.json",
             InputFormat::Json,
             8,
@@ -126,15 +93,30 @@ fn streams_objects_and_ranges_into_existing_arrow_reader() {
         .unwrap();
         assert_eq!(reader.next_batch().await.unwrap().unwrap().num_rows(), 1);
         assert!(reader.next_batch().await.unwrap().is_none());
-        assert_eq!(*transport.requests.lock().unwrap(), 4);
-        assert!(!operator.info().capability().list);
+        assert!(!full.info().capability().list);
         assert_eq!(
-            operator
-                .write("trajectory.json", "x")
-                .await
-                .unwrap_err()
-                .kind(),
+            full.write("trajectory.json", "x").await.unwrap_err().kind(),
             ErrorKind::Unsupported
+        );
+
+        let partial = operator(|req| {
+            assert_eq!(req.method(), Method::GET);
+            assert_eq!(req.headers()["range"], "bytes=2-6");
+            let mut reply = response(206, &DOCUMENT[2..7]);
+            reply.headers_mut().insert(
+                "content-range",
+                format!("bytes 2-6/{}", DOCUMENT.len()).parse().unwrap(),
+            );
+            reply
+        });
+        assert_eq!(
+            partial
+                .read_with("trajectory.json")
+                .range(2..7)
+                .await
+                .unwrap()
+                .to_bytes(),
+            &DOCUMENT.as_bytes()[2..7]
         );
     });
 }
@@ -143,62 +125,31 @@ fn streams_objects_and_ranges_into_existing_arrow_reader() {
 fn maps_storage_errors_and_rejects_ignored_ranges() {
     futures::executor::block_on(async {
         for (status, body, kind, temporary) in [
-            (StatusCode::NOT_FOUND, "", ErrorKind::NotFound, false),
+            (404, "", ErrorKind::NotFound, false),
             (
-                StatusCode::BAD_REQUEST,
+                400,
                 r#"{"code":"InvalidJWT"}"#,
                 ErrorKind::PermissionDenied,
                 false,
             ),
-            (
-                StatusCode::FORBIDDEN,
-                "",
-                ErrorKind::PermissionDenied,
-                false,
-            ),
-            (
-                StatusCode::RANGE_NOT_SATISFIABLE,
-                "",
-                ErrorKind::RangeNotSatisfied,
-                false,
-            ),
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                "",
-                ErrorKind::Unexpected,
-                true,
-            ),
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "",
-                ErrorKind::Unexpected,
-                true,
-            ),
+            (403, "", ErrorKind::PermissionDenied, false),
+            (416, "", ErrorKind::RangeNotSatisfied, false),
+            (429, "", ErrorKind::Unexpected, true),
+            (500, "", ErrorKind::Unexpected, true),
         ] {
-            let transport = HubTransport {
-                object_error: Some((status, body)),
-                ..Default::default()
-            };
-            let error = operator(&transport)
+            let error = operator(move |_| response(status, body))
                 .read("trajectory.json")
                 .await
                 .unwrap_err();
             assert_eq!(error.kind(), kind);
             assert_eq!(error.is_temporary(), temporary);
         }
-        let transport = HubTransport {
-            ignore_range: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            operator(&transport)
-                .read_with("trajectory.json")
-                .range(2..7)
-                .await
-                .unwrap_err()
-                .kind(),
-            ErrorKind::Unsupported
-        );
+        let error = operator(|_| response(200, DOCUMENT))
+            .read_with("trajectory.json")
+            .range(2..7)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
     });
 }
 
@@ -239,25 +190,37 @@ fn rejects_missing_or_mismatched_content_ranges() {
             Some("bytes 2-6/4"),
             Some("bytes 2-18446744073709551615/18446744073709551615"),
         ] {
-            let transport = HubTransport {
-                missing_content_range: content_range.is_none(),
-                content_range,
-                ..Default::default()
-            };
-            let error = operator(&transport)
-                .read_with("trajectory.json")
-                .range(2..7)
-                .await
-                .unwrap_err();
+            let error = operator(move |_| {
+                let mut reply = response(206, &DOCUMENT[2..7]);
+                if let Some(value) = content_range {
+                    reply
+                        .headers_mut()
+                        .insert("content-range", value.parse().unwrap());
+                }
+                reply
+            })
+            .read_with("trajectory.json")
+            .range(2..7)
+            .await
+            .unwrap_err();
             assert_eq!(error.kind(), ErrorKind::Unexpected);
         }
         // Open-ended ranges remain valid through the object's end.
-        let transport = HubTransport::default();
-        let buffer = operator(&transport)
-            .read_with("trajectory.json")
-            .range(2..)
-            .await
-            .unwrap();
+        let buffer = operator(|req| {
+            assert_eq!(req.headers()["range"], "bytes=2-");
+            let mut reply = response(206, &DOCUMENT[2..]);
+            reply.headers_mut().insert(
+                "content-range",
+                format!("bytes 2-{}/{}", DOCUMENT.len() - 1, DOCUMENT.len())
+                    .parse()
+                    .unwrap(),
+            );
+            reply
+        })
+        .read_with("trajectory.json")
+        .range(2..)
+        .await
+        .unwrap();
         assert_eq!(buffer.to_bytes(), &DOCUMENT.as_bytes()[2..]);
     });
 }

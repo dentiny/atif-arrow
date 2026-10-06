@@ -20,14 +20,13 @@ pub struct TrajectoryReader<R> {
     reader: R,
     format: InputFormat,
     batch_size: usize,
+    // Keeps converted rows across cancellation until the batch is flushed.
     builder: TrajectoryBatchBuilder,
     source_uri: Option<String>,
     // Reused document buffer; partial bytes survive cancellation, including split UTF-8.
     buffer: Vec<u8>,
     // One-based index of the next document; blank JSONL lines do not advance it.
     record_index: u64,
-    // Rows already converted in this batch, retained if next_batch is cancelled.
-    batch_rows: usize,
     done: bool,
 }
 
@@ -56,7 +55,6 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
             source_uri,
             buffer: Vec::new(),
             record_index: 1,
-            batch_rows: 0,
             done: false,
         })
     }
@@ -97,13 +95,10 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         if self.done {
             return Ok(None);
         }
-        let first_index = self.record_index - self.batch_rows as u64;
-        while self.batch_rows < self.batch_size {
+        let first_index = self.record_index - self.builder.num_rows() as u64;
+        while self.builder.num_rows() < self.batch_size {
             match self.read_record().await {
-                Ok(true) => {
-                    self.record_index += 1;
-                    self.batch_rows += 1;
-                }
+                Ok(true) => self.record_index += 1,
                 Ok(false) => break,
                 Err(source) => {
                     self.done = true;
@@ -115,16 +110,14 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
                 }
             }
         }
-        let batch = self.builder.flush().map_err(|source| {
+        self.builder.flush().map_err(|source| {
             self.done = true;
             ReadError::Record {
                 source_uri: self.source_uri.clone(),
                 record_index: first_index,
                 source: Box::new(source),
             }
-        })?;
-        self.batch_rows = 0;
-        Ok(batch)
+        })
     }
 
     /// Exposes batches as a stream that ends at EOF or after the first error.

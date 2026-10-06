@@ -292,11 +292,15 @@ fn batch_builder_requires_flushing_and_can_be_reused() {
 
     assert!(TrajectoryBatchBuilder::new(0).is_err());
     let mut builder = TrajectoryBatchBuilder::new(2).unwrap();
+    assert_eq!(builder.num_rows(), 0);
     for index in 1..=2 {
         builder.append_json(DOCUMENT, None, index).unwrap();
+        assert_eq!(builder.num_rows(), index as usize);
     }
     assert!(builder.append_json(DOCUMENT, None, 3).is_err());
+    assert_eq!(builder.num_rows(), 2);
     let batch = builder.flush().unwrap().unwrap();
+    assert_eq!(builder.num_rows(), 0);
     assert_eq!(batch.num_rows(), 2);
     assert_eq!(batch.schema(), trajectory_schema());
     assert!(builder.flush().unwrap().is_none());

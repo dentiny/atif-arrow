@@ -1,4 +1,4 @@
-use arrow_array::{StringArray, UInt64Array};
+use arrow_array::{cast::AsArray, types::UInt64Type};
 use atif_arrow::trajectory_schema;
 use atif_io::{InputFormat, ReadError, TrajectoryReader};
 use futures::TryStreamExt;
@@ -49,24 +49,15 @@ async fn reads_memory_and_filesystem_objects_in_batches() {
             let mut index = 0;
             for batch in batches {
                 assert_eq!(batch.schema(), trajectory_schema());
-                let raw = batch
-                    .column_by_name("raw_json")
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
+                let raw = batch.column_by_name("raw_json").unwrap().as_string::<i32>();
                 let indices = batch
                     .column_by_name("source_record_index")
                     .unwrap()
-                    .as_any()
-                    .downcast_ref::<UInt64Array>()
-                    .unwrap();
+                    .as_primitive::<UInt64Type>();
                 let sources = batch
                     .column_by_name("source_uri")
                     .unwrap()
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
+                    .as_string::<i32>();
                 for row in 0..batch.num_rows() {
                     assert_eq!(raw.value(row), expected_raw[index]);
                     assert_eq!(indices.value(row), index as u64 + 1);
@@ -137,9 +128,7 @@ async fn preserves_storage_errors_and_custom_source_identity() {
     let sources = batch
         .column_by_name("source_uri")
         .unwrap()
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
+        .as_string::<i32>();
     assert_eq!(sources.value(0), uri);
     let error = reader.next_batch().await.unwrap_err();
     assert!(

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use http::HeaderValue;
 use opendal_core::raw::*;
+use opendal_core::ErrorKind::Unsupported;
 use opendal_core::*;
 
 use crate::config::HarborHubConfig;
@@ -89,7 +90,6 @@ impl Builder for HarborHub {
             core: Arc::new(HarborHubCore {
                 info: ServiceInfo::new("harborhub", &root, "results"),
                 endpoint: url.as_str().trim_end_matches('/').into(),
-                root,
                 publishable_key,
             }),
         })
@@ -150,38 +150,26 @@ impl Service for HarborHubBackend {
         _: &str,
         _: OpCreateDir,
     ) -> Result<RpCreateDir> {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "Harbor Hub is read-only",
-        ))
+        Err(Error::new(Unsupported, "Harbor Hub is read-only"))
     }
 
     fn write(&self, _: &OperationContext, _: &str, _: OpWrite) -> Result<Self::Writer> {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "Harbor Hub is read-only",
-        ))
+        Err(Error::new(Unsupported, "Harbor Hub is read-only"))
     }
 
     fn list(&self, _: &OperationContext, _: &str, _: OpList) -> Result<Self::Lister> {
         Err(Error::new(
-            ErrorKind::Unsupported,
+            Unsupported,
             "Harbor Hub listing is not implemented",
         ))
     }
 
     fn delete(&self, _: &OperationContext) -> Result<Self::Deleter> {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "Harbor Hub is read-only",
-        ))
+        Err(Error::new(Unsupported, "Harbor Hub is read-only"))
     }
 
     fn copy(&self, _: &OperationContext, _: &str, _: &str, _: OpCopy) -> Result<Self::Copier> {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "Harbor Hub is read-only",
-        ))
+        Err(Error::new(Unsupported, "Harbor Hub is read-only"))
     }
 
     async fn rename(
@@ -191,15 +179,12 @@ impl Service for HarborHubBackend {
         _: &str,
         _: OpRename,
     ) -> Result<RpRename> {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "Harbor Hub is read-only",
-        ))
+        Err(Error::new(Unsupported, "Harbor Hub is read-only"))
     }
 
     async fn presign(&self, _: &OperationContext, _: &str, _: OpPresign) -> Result<RpPresign> {
         Err(Error::new(
-            ErrorKind::Unsupported,
+            Unsupported,
             "Harbor Hub presigning is not implemented",
         ))
     }

@@ -130,44 +130,27 @@ JSON, normalized JSON, and Arrow buffers; it is not zero-copy.
 
 ## OpenDAL storage reading
 
-`TrajectoryReader::open(...).await` accepts a configured async `opendal::Operator`
-and an object path relative to that operator's root. The caller selects the backend,
-credentials, and runtime. `atif-io` enables OpenDAL's Tokio executor and reqwest
-HTTP transport with default features disabled. Filesystem support is enabled only
-for tests; memory is built into OpenDAL. S3 and GCS are not enabled.
+`TrajectoryReader::open(operator, path, format, batch_size, source_uri).await`
+reads through a caller-configured async `opendal::Operator`. Paths are relative
+to its root; `None` uses the path as provenance. Supply a full source URI to
+distinguish storage roots or buckets.
 
-For a filesystem operator, the caller enables `opendal/services-fs`:
+`atif-io` enables OpenDAL's Tokio executor and reqwest HTTP transport, with default
+features disabled. Memory is built in; filesystem is enabled only for tests.
+Callers can enable `opendal/services-fs` and configure
+`services::Fs::default().root("/data")` for local files. S3 and GCS are not enabled.
 
-```rust
-use atif_io::{InputFormat, TrajectoryReader};
-use opendal::{services, Operator};
-
-let operator = Operator::new(services::Fs::default().root("/data"))?;
-let mut reader = TrajectoryReader::open(
-    &operator, "trajectories.jsonl", InputFormat::JsonLines, 256,
-    Some("file:///data/trajectories.jsonl".into()),
-).await?;
-while let Some(batch) = reader.next_batch().await? {
-    println!("{} trajectories", batch.num_rows());
-}
-```
-
-If `source_uri` is `None`, the object path is used as provenance. Supply a full URI
-when records need to distinguish storage roots or buckets. OpenDAL may defer object
-access until the first read: a missing object can produce a record-1 error from
-`next_batch`. Errors preserve the underlying OpenDAL cause.
-
-OpenDAL's `FuturesAsyncReader` feeds the reader directly without another buffer
-layer or downloading the whole object into an intermediate buffer first. JSONL
-remains incremental; one JSON document is read in full as before. Async I/O waits
-yield to the runtime; parsing, validation, and Arrow conversion remain synchronous
-CPU work. See [OpenDAL's async reader](https://opendal.apache.org/docs/rust/opendal/struct.Reader.html).
+OpenDAL may defer access until reading, so a missing object can produce a record-1
+error from `next_batch`. Errors preserve the underlying OpenDAL cause.
+[OpenDAL's async reader](https://opendal.apache.org/docs/rust/opendal/struct.Reader.html)
+feeds `TrajectoryReader` directly without a second buffer or an intermediate
+object download. JSONL reading is incremental; each JSON document is read in full.
+I/O yields to the runtime; parsing and conversion remain synchronous CPU work.
 
 ## Harbor Hub backend
 
-The standalone `opendal-service-harborhub` crate follows OpenDAL's service layout:
-`HarborHub` implements `Builder`, builds a `Service`, and streams HTTP response
-bodies through OpenDAL's reader adapters. It has no dependency on ATIF conversion.
+`opendal-service-harborhub` implements OpenDAL's `Builder` and `Service` interfaces,
+streams response bodies, and has no production dependency on ATIF conversion.
 
 ```rust
 use atif_io::{InputFormat, TrajectoryReader};
@@ -181,32 +164,25 @@ let mut reader = TrajectoryReader::open(
     &operator, path, InputFormat::Json, 256,
     Some(format!("harborhub://{path}")),
 ).await?;
-while let Some(batch) = reader.next_batch().await? {
-    println!("{} trajectories", batch.num_rows());
-}
 ```
 
-Paths are relative to Harbor's `results` bucket. For example,
+Consume batches as shown above. Paths are relative to Harbor's `results` bucket;
 `root("trials/<trial-id>")` makes `trajectory.json` relative to that trial.
-`endpoint` selects the Supabase project URL, not the Hub website URL;
-`publishable_key` selects that project's public gateway key. Defaults match
+`endpoint` selects the Supabase project URL, and `publishable_key` selects its
+public gateway key. Defaults match
 [Harbor's public project configuration](https://github.com/harbor-framework/harbor/blob/main/src/harbor/auth/constants.py).
 
-This first backend supports anonymous `read`, byte ranges, and `stat`.
-It sends the public Supabase gateway key and no user bearer token. Server-side
-permissions still apply, so private results require future authentication support.
-Personal API-key exchange, token refresh, listing, writes, and archive extraction
-are not implemented. `Operator::new(HarborHub::default())` is the supported
-construction path; URI registration is not implemented.
+The backend supports anonymous `read`, byte ranges, and `stat`. It sends the public
+key without a user bearer token; server permissions still apply to private results.
+Personal API-key exchange, token refresh, listing, writes, archive extraction, and
+URI registration are not implemented. Construct it with
+`Operator::new(HarborHub::default())`.
 
-Harbor may store trajectories separately at `trials/<trial-id>/trajectory.json`,
-but that upload is optional. A missing direct trajectory may exist in
-`trials/<trial-id>/trial.tar.gz`; this backend can read archive bytes but does not
-extract their contents. See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
-
-Backend tests use a scripted HTTP transport to verify path encoding, range reads,
-metadata, error mapping, and conversion through `TrajectoryReader`. They do not
-verify access to an existing trajectory on the live Hub.
+Direct trajectory uploads are optional. A missing `trials/<trial-id>/trajectory.json`
+may be inside `trials/<trial-id>/trial.tar.gz`; the backend reads archive bytes but
+does not extract them. See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
+Tests use scripted HTTP responses to check encoding, ranges, metadata, errors, and
+Arrow conversion; they do not verify access to an existing live Hub trajectory.
 
 ## Supported types and limitations
 
