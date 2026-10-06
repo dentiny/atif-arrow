@@ -6,7 +6,7 @@ The workspace provides a fixed Arrow schema, core ATIF parsing, conversion, and 
 | Crate | Responsibility |
 | --- | --- |
 | `atif-arrow` | Arrow schema, parsing, validation, and conversion, including batch construction. |
-| `atif-io` | JSON/JSONL reading and source provenance; future storage backend adapters. |
+| `atif-io` | Async JSON/JSONL reading, source provenance, and OpenDAL storage access. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -94,24 +94,28 @@ reading external data. A full batch must be flushed before appending another row
 
 ```rust
 use atif_io::{InputFormat, TrajectoryReader};
-use std::{fs::File, io::BufReader};
+use futures::io::Cursor;
 
-let input = BufReader::new(File::open("trajectories.jsonl")?);
-let reader = TrajectoryReader::new(
-    input, InputFormat::JsonLines, 256, Some("trajectories.jsonl".into()),
+let input = Cursor::new(document.as_bytes());
+let mut reader = TrajectoryReader::new(
+    input, InputFormat::Json, 256, None,
 )?;
-for batch in reader {
-    let batch = batch?;
+while let Some(batch) = reader.next_batch().await? {
     println!("{} trajectories", batch.num_rows());
 }
 ```
+
+`TrajectoryReader` accepts `futures::io::AsyncBufRead + Unpin`.
+`next_batch().await` returns `Result<Option<RecordBatch>, ReadError>`.
+`into_stream()` provides a `Stream<Item = Result<RecordBatch, ReadError>>` for
+`TryStreamExt` consumers. Pending calls can be cancelled and resumed without losing
+partial input or previously converted rows in the current batch.
 
 `InputFormat::Json` reads one complete document, including pretty-printed JSON.
 `JsonLines` reads one document per nonblank line and yields batches with at most
 `batch_size` rows. Empty JSONL input yields no batches; empty JSON input is an error.
 Batch size must be positive. Input streams and source URIs are supplied by the caller.
-`atif-io` owns the reader and its errors; `atif-arrow` owns conversion. Future
-OpenDAL adapters will live in `atif-io`.
+`atif-io` owns the reader, storage access, and reading errors; `atif-arrow` owns conversion.
 
 Record indices start at 1 and count documents, excluding blank lines. `raw_json`
 retains the record's original whitespace, including JSONL line endings. I/O, parsing,
@@ -122,6 +126,40 @@ Rows feed one `TrajectoryBatchBuilder` per reader, avoiding intermediate single-
 and concatenation of their column buffers. The reader reuses its input buffer and
 does not retain a separate raw document copy. Conversion still allocates parsed
 JSON, normalized JSON, and Arrow buffers; it is not zero-copy.
+
+## OpenDAL storage reading
+
+`TrajectoryReader::open(...).await` accepts a configured async `opendal::Operator`
+and an object path relative to that operator's root. The caller selects the backend,
+credentials, service features, and runtime. `atif-io` enables OpenDAL's Tokio executor
+without selecting a storage service or HTTP transport in its normal dependency.
+
+For this filesystem example, enable `opendal/services-fs` in the caller:
+
+```rust
+use atif_io::{InputFormat, TrajectoryReader};
+use opendal::{services, Operator};
+
+let operator = Operator::new(services::Fs::default().root("/data"))?;
+let mut reader = TrajectoryReader::open(
+    &operator, "trajectories.jsonl", InputFormat::JsonLines, 256,
+    Some("file:///data/trajectories.jsonl".into()),
+).await?;
+while let Some(batch) = reader.next_batch().await? {
+    println!("{} trajectories", batch.num_rows());
+}
+```
+
+If `source_uri` is `None`, the object path is used as provenance. Supply a full URI
+when records need to distinguish storage roots or buckets. OpenDAL may defer object
+access until the first read: a missing object can produce a record-1 error from
+`next_batch`. Errors preserve the underlying OpenDAL cause.
+
+OpenDAL's `FuturesAsyncReader` feeds the reader directly without another buffer
+layer or downloading the whole object into an intermediate buffer first. JSONL
+remains incremental; one JSON document is read in full as before. Async I/O waits
+yield to the runtime; parsing, validation, and Arrow conversion remain synchronous
+CPU work. See [OpenDAL's async reader](https://opendal.apache.org/docs/rust/opendal/struct.Reader.html).
 
 ## Supported types and limitations
 
