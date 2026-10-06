@@ -6,7 +6,8 @@ adding rows or requiring a recursive Arrow type. `session_id` is run-scoped,
 can repeat, and is not a primary key; neither identifier is synthesized.
 
 This contract targets ATIF v1.0–v1.8. It defines the planned converter output;
-the current implementation only provides `trajectory_schema()`.
+the current implementation provides the schema and core ATIF parsing. Arrow
+conversion follows separately.
 Reference: [Harbor's ATIF RFC at f9f974a](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md).
 
 ## Root fields
