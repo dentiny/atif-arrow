@@ -127,10 +127,21 @@ impl Service for HarborHubBackend {
         let req = self.core.object_request(http::Method::HEAD, path)?;
         let resp = ctx.http_transport().send(req).await?;
         if resp.status() == http::StatusCode::OK {
-            parse_into_metadata(path, resp.headers()).map(RpStat::new)
-        } else {
-            Err(parse_error(resp))
+            return parse_into_metadata(path, resp.headers()).map(RpStat::new);
         }
+        if resp.status() != http::StatusCode::BAD_REQUEST {
+            return Err(parse_error(resp));
+        }
+        // Legacy Supabase errors use HTTP 400; HEAD omits the identifying JSON body.
+        let req = self.core.object_request(http::Method::GET, path)?;
+        let resp = ctx.http_transport().fetch(req).await?;
+        if resp.status() == http::StatusCode::OK {
+            // Inspect metadata and drop the stream without buffering the object.
+            return parse_into_metadata(path, resp.headers()).map(RpStat::new);
+        }
+        let (parts, mut body) = resp.into_parts();
+        let buffer = body.to_buffer().await?;
+        Err(parse_error(http::Response::from_parts(parts, buffer)))
     }
 
     async fn create_dir(

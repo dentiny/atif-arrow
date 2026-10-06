@@ -12,20 +12,18 @@ const DOCUMENT: &str = r#"{"schema_version":"ATIF-v1.8","agent":{"name":"test","
 /// Scripted HTTP transport verifies Harbor requests without contacting a real account.
 #[derive(Clone, Default)]
 struct HubTransport {
-    state: Arc<Mutex<State>>,
+    requests: Arc<Mutex<usize>>,
     object_error: Option<(StatusCode, &'static str)>,
     ignore_range: bool,
-}
-
-#[derive(Default)]
-struct State {
-    object_requests: usize,
+    head_bad_request: bool,
+    missing_content_range: bool,
+    content_range: Option<&'static str>,
 }
 
 impl HttpTransport for HubTransport {
     async fn fetch(&self, req: Request<Buffer>) -> Result<Response<HttpBody>> {
         assert_eq!(req.headers()["apikey"], "publishable-test-key");
-        let mut state = self.state.lock().unwrap();
+        let mut requests = self.requests.lock().unwrap();
         let mut response = Response::builder();
         assert!(req.headers().get("authorization").is_none());
         let body = {
@@ -34,8 +32,11 @@ impl HttpTransport for HubTransport {
                 "/storage/v1/object/results/trials/%E8%AF%95%E9%AA%8C%3F%23%20%25/trajectory.json"
             );
             assert!(req.uri().query().is_none());
-            state.object_requests += 1;
-            if let Some((status, body)) = self.object_error {
+            *requests += 1;
+            if req.method() == Method::HEAD && self.head_bad_request {
+                response = response.status(StatusCode::BAD_REQUEST);
+                String::new()
+            } else if let Some((status, body)) = self.object_error {
                 response = response.status(status);
                 body.into()
             } else if req.method() == Method::HEAD {
@@ -61,11 +62,12 @@ impl HttpTransport for HubTransport {
                     };
                     response = response
                         .status(StatusCode::PARTIAL_CONTENT)
-                        .header(
-                            "content-range",
-                            format!("bytes {start}-{end}/{}", DOCUMENT.len()),
-                        )
                         .header("content-length", end - start + 1);
+                    if !self.missing_content_range {
+                        let normal_range = format!("bytes {start}-{end}/{}", DOCUMENT.len());
+                        response = response
+                            .header("content-range", self.content_range.unwrap_or(&normal_range));
+                    }
                     DOCUMENT[start..=end].into()
                 } else {
                     response = response.header("content-length", DOCUMENT.len());
@@ -128,7 +130,7 @@ fn streams_objects_and_ranges_into_existing_arrow_reader() {
         .unwrap();
         assert_eq!(reader.next_batch().await.unwrap().unwrap().num_rows(), 1);
         assert!(reader.next_batch().await.unwrap().is_none());
-        assert_eq!(transport.state.lock().unwrap().object_requests, 4);
+        assert_eq!(*transport.requests.lock().unwrap(), 4);
         assert!(!operator.info().capability().list);
         assert_eq!(
             operator
@@ -232,4 +234,89 @@ fn validates_configuration() {
             .kind(),
         ErrorKind::ConfigInvalid
     );
+}
+
+#[test]
+fn stat_resolves_legacy_head_errors_without_assuming_not_found() {
+    futures::executor::block_on(async {
+        let transport = HubTransport {
+            head_bad_request: true,
+            object_error: Some((
+                StatusCode::BAD_REQUEST,
+                r#"{"code":"NoSuchKey","statusCode":"404"}"#,
+            )),
+            ..Default::default()
+        };
+        let op = operator(&transport);
+        assert_eq!(
+            op.stat("trajectory.json").await.unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert!(!op.exists("trajectory.json").await.unwrap());
+        assert_eq!(*transport.requests.lock().unwrap(), 4);
+
+        let denied = HubTransport {
+            head_bad_request: true,
+            object_error: Some((StatusCode::BAD_REQUEST, r#"{"code":"AccessDenied"}"#)),
+            ..Default::default()
+        };
+        assert_eq!(
+            operator(&denied)
+                .stat("trajectory.json")
+                .await
+                .unwrap_err()
+                .kind(),
+            ErrorKind::PermissionDenied
+        );
+
+        // A 400 from HEAD does not by itself establish whether an object exists.
+        let readable = HubTransport {
+            head_bad_request: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            operator(&readable)
+                .stat("trajectory.json")
+                .await
+                .unwrap()
+                .content_length(),
+            DOCUMENT.len() as u64
+        );
+    });
+}
+
+#[test]
+fn rejects_missing_or_mismatched_content_ranges() {
+    futures::executor::block_on(async {
+        for content_range in [
+            None,
+            Some("bytes 0-4/130"),
+            Some("bytes 2-5/130"),
+            Some("bytes 2-7/130"),
+            Some("bytes 2-6/*"),
+            Some("bytes */130"),
+            Some("bytes 2-6/4"),
+            Some("bytes 2-18446744073709551615/18446744073709551615"),
+        ] {
+            let transport = HubTransport {
+                missing_content_range: content_range.is_none(),
+                content_range,
+                ..Default::default()
+            };
+            let error = operator(&transport)
+                .read_with("trajectory.json")
+                .range(2..7)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::Unexpected);
+        }
+        // Open-ended ranges remain valid through the object's end.
+        let transport = HubTransport::default();
+        let buffer = operator(&transport)
+            .read_with("trajectory.json")
+            .range(2..)
+            .await
+            .unwrap();
+        assert_eq!(buffer.to_bytes(), &DOCUMENT.as_bytes()[2..]);
+    });
 }
