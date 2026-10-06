@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/atif-arrow", "crates/atif-io", "crates/atif-arrow-cli"]
+members = ["crates/atif-arrow", "crates/atif-io", "crates/atif-arrow-cli", "crates/opendal-service-harborhub"]
 resolver = "2"
 
 [workspace.package]
@@ -15,7 +15,10 @@ arrow-schema = "58"
 atif-arrow = { path = "crates/atif-arrow", version = "0.1.0" }
 atif-io = { path = "crates/atif-io", version = "0.1.0" }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
-opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio"] }
+opendal = { version = "0.59.3", default-features = false, features = [
+    "executors-tokio",
+    "http-transport-reqwest",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 serde_path_to_error = "0.1"

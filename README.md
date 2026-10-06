@@ -7,6 +7,7 @@ The workspace provides a fixed Arrow schema, core ATIF parsing, conversion, and 
 | --- | --- |
 | `atif-arrow` | Arrow schema, parsing, validation, and conversion, including batch construction. |
 | `atif-io` | Async JSON/JSONL reading, source provenance, and OpenDAL storage access. |
+| `opendal-service-harborhub` | Read-only OpenDAL backend for Harbor Hub result objects. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -131,10 +132,11 @@ JSON, normalized JSON, and Arrow buffers; it is not zero-copy.
 
 `TrajectoryReader::open(...).await` accepts a configured async `opendal::Operator`
 and an object path relative to that operator's root. The caller selects the backend,
-credentials, service features, and runtime. `atif-io` enables OpenDAL's Tokio executor
-without selecting a storage service or HTTP transport in its normal dependency.
+credentials, and runtime. `atif-io` enables OpenDAL's Tokio executor and reqwest
+HTTP transport with default features disabled. Filesystem support is enabled only
+for tests; memory is built into OpenDAL. S3 and GCS are not enabled.
 
-For this filesystem example, enable `opendal/services-fs` in the caller:
+For a filesystem operator, the caller enables `opendal/services-fs`:
 
 ```rust
 use atif_io::{InputFormat, TrajectoryReader};
@@ -160,6 +162,51 @@ layer or downloading the whole object into an intermediate buffer first. JSONL
 remains incremental; one JSON document is read in full as before. Async I/O waits
 yield to the runtime; parsing, validation, and Arrow conversion remain synchronous
 CPU work. See [OpenDAL's async reader](https://opendal.apache.org/docs/rust/opendal/struct.Reader.html).
+
+## Harbor Hub backend
+
+The standalone `opendal-service-harborhub` crate follows OpenDAL's service layout:
+`HarborHub` implements `Builder`, builds a `Service`, and streams HTTP response
+bodies through OpenDAL's reader adapters. It has no dependency on ATIF conversion.
+
+```rust
+use atif_io::{InputFormat, TrajectoryReader};
+use opendal::Operator;
+use opendal_service_harborhub::HarborHub;
+
+opendal::install_default(); // Install the provided HTTP transport.
+let operator = Operator::new(HarborHub::default())?;
+let path = "trials/<trial-id>/trajectory.json";
+let mut reader = TrajectoryReader::open(
+    &operator, path, InputFormat::Json, 256,
+    Some(format!("harborhub://{path}")),
+).await?;
+while let Some(batch) = reader.next_batch().await? {
+    println!("{} trajectories", batch.num_rows());
+}
+```
+
+Paths are relative to Harbor's `results` bucket. For example,
+`root("trials/<trial-id>")` makes `trajectory.json` relative to that trial.
+`endpoint` selects the Supabase project URL, not the Hub website URL;
+`publishable_key` selects that project's public gateway key. Defaults match
+[Harbor's public project configuration](https://github.com/harbor-framework/harbor/blob/main/src/harbor/auth/constants.py).
+
+This first backend supports anonymous `read`, byte ranges, and `stat`.
+It sends the public Supabase gateway key and no user bearer token. Server-side
+permissions still apply, so private results require future authentication support.
+Personal API-key exchange, token refresh, listing, writes, and archive extraction
+are not implemented. `Operator::new(HarborHub::default())` is the supported
+construction path; URI registration is not implemented.
+
+Harbor may store trajectories separately at `trials/<trial-id>/trajectory.json`,
+but that upload is optional. A missing direct trajectory may exist in
+`trials/<trial-id>/trial.tar.gz`; this backend can read archive bytes but does not
+extract their contents. See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
+
+Backend tests use a scripted HTTP transport to verify path encoding, range reads,
+metadata, error mapping, and conversion through `TrajectoryReader`. They do not
+verify access to an existing trajectory on the live Hub.
 
 ## Supported types and limitations
 
