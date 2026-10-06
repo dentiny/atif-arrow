@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/atif-arrow", "crates/atif-arrow-cli"]
+members = ["crates/atif-arrow", "crates/atif-io", "crates/atif-arrow-cli"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,7 @@ arrow-array = "58"
 arrow-json = "58"
 arrow-schema = "58"
 atif-arrow = { path = "crates/atif-arrow", version = "0.1.0" }
+atif-io = { path = "crates/atif-io", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 serde_path_to_error = "0.1"

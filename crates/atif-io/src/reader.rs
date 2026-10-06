@@ -1,9 +1,9 @@
 use std::io::BufRead;
 
 use arrow_array::RecordBatch;
-use arrow_json::{reader::Decoder, ReaderBuilder};
+use atif_arrow::TrajectoryBatchBuilder;
 
-use crate::{convert::encode_trajectory, parse::parse_document, trajectory_schema, ReadError};
+use crate::ReadError;
 
 /// The document layout supplied to a trajectory reader.
 #[derive(Debug, Clone, Copy)]
@@ -18,7 +18,7 @@ pub struct TrajectoryReader<R> {
     reader: R,
     format: InputFormat,
     batch_size: usize,
-    decoder: Decoder,
+    builder: TrajectoryBatchBuilder,
     source_uri: Option<String>,
     // Reused input buffer holding the current document, including its original whitespace.
     buffer: String,
@@ -38,10 +38,8 @@ impl<R: BufRead> TrajectoryReader<R> {
         if batch_size == 0 {
             return Err(ReadError::InvalidBatchSize);
         }
-        let decoder = ReaderBuilder::new(trajectory_schema())
-            .with_batch_size(batch_size)
-            .build_decoder()
-            .map_err(|source| ReadError::Record {
+        let builder =
+            TrajectoryBatchBuilder::new(batch_size).map_err(|source| ReadError::Record {
                 source_uri: source_uri.clone(),
                 record_index: 1,
                 source: Box::new(source),
@@ -50,7 +48,7 @@ impl<R: BufRead> TrajectoryReader<R> {
             reader,
             format,
             batch_size,
-            decoder,
+            builder,
             source_uri,
             buffer: String::new(),
             record_index: 1,
@@ -58,7 +56,7 @@ impl<R: BufRead> TrajectoryReader<R> {
         })
     }
 
-    /// Reads one document into the batch decoder, retaining its original whitespace.
+    /// Reads one document into the converter, retaining its original whitespace.
     fn read_record(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         if self.done {
             return Ok(false);
@@ -80,15 +78,8 @@ impl<R: BufRead> TrajectoryReader<R> {
                 }
             },
         }
-        let trajectory = parse_document(&self.buffer)?;
-        let encoded = encode_trajectory(
-            &trajectory,
-            &self.buffer,
-            self.source_uri.as_deref(),
-            self.record_index,
-        )?;
-        let consumed = self.decoder.decode(encoded.as_bytes())?;
-        debug_assert_eq!(consumed, encoded.len());
+        self.builder
+            .append_json(&self.buffer, self.source_uri.as_deref(), self.record_index)?;
         Ok(true)
     }
 }
@@ -116,7 +107,7 @@ impl<R: BufRead> Iterator for TrajectoryReader<R> {
                 }
             }
         }
-        self.decoder
+        self.builder
             .flush()
             .map_err(|source| {
                 self.done = true;
