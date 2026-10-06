@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::ParseError;
@@ -18,7 +18,7 @@ impl ParsedTrajectory {
 }
 
 /// Core ATIF envelope; remaining root fields are preserved as JSON values.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Trajectory {
     pub schema_version: String,
     pub session_id: Option<String>,
@@ -30,7 +30,7 @@ pub struct Trajectory {
 }
 
 /// Agent identity and configuration, with unmodeled fields retained.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Agent {
     pub name: String,
     pub version: String,
@@ -40,7 +40,7 @@ pub struct Agent {
 }
 
 /// An interaction's core fields; tool calls, metrics, and other payloads remain JSON.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Step {
     pub step_id: u64,
     pub source: StepSource,
@@ -50,7 +50,7 @@ pub struct Step {
 }
 
 /// The three interaction sources defined by ATIF.
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StepSource {
     System,
@@ -59,7 +59,7 @@ pub enum StepSource {
 }
 
 /// Text or opaque multimodal parts, to be validated and normalized separately.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Message {
     Text(String),
@@ -82,7 +82,7 @@ pub fn parse_trajectory(input: &str) -> Result<ParsedTrajectory, ParseError> {
 }
 
 /// Validates supported versions, legacy session identity, and sequential step IDs.
-fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
+pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
     match trajectory.schema_version.as_str() {
         "ATIF-v1.0" | "ATIF-v1.1" | "ATIF-v1.2" | "ATIF-v1.3" | "ATIF-v1.4" | "ATIF-v1.5"
         | "ATIF-v1.6" => {

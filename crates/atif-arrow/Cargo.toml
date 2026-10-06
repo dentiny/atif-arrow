@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+arrow-array.workspace = true
+arrow-json.workspace = true
 arrow-schema.workspace = true
 serde.workspace = true
 serde_json.workspace = true
