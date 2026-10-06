@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 
 use serde_json::Value;
+use time::{format_description::well_known::Iso8601, Date, OffsetDateTime, PrimitiveDateTime};
 
-use crate::{Message, ParseError, Trajectory};
+use crate::{Message, ParseError, Step, StepSource, Trajectory};
 
-/// Validates supported versions, legacy session identity, and sequential step IDs.
+/// Validates supported versions, legacy session identity, and step invariants.
 pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
     match trajectory.schema_version.as_str() {
         "ATIF-v1.0" | "ATIF-v1.1" | "ATIF-v1.2" | "ATIF-v1.3" | "ATIF-v1.4" | "ATIF-v1.5"
@@ -34,6 +35,95 @@ pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
                 format!("steps[{index}].step_id"),
                 format!("expected {expected}, got {}", step.step_id),
             ));
+        }
+        let path = format!("steps[{index}]");
+        validate_timestamp(step, &path)?;
+        validate_agent_fields(step, &path)?;
+        validate_llm_fields(step, &path)?;
+    }
+    Ok(())
+}
+
+/// Validates a non-null timestamp while preserving its original text and timezone.
+fn validate_timestamp(step: &Step, path: &str) -> Result<(), ParseError> {
+    let Some(value) = step
+        .additional_fields
+        .get("timestamp")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(());
+    };
+    let valid = value.as_str().is_some_and(|timestamp| {
+        // Harbor also accepts a space between the date and time.
+        let timestamp = if timestamp.contains(' ') {
+            Cow::Owned(timestamp.replacen(' ', "T", 1))
+        } else {
+            Cow::Borrowed(timestamp)
+        };
+        match timestamp.split_once('T') {
+            Some((_, time)) if time.contains(['+', '-', 'Z']) => {
+                // Match Harbor: UTC offsets must be strictly less than 24 hours.
+                OffsetDateTime::parse(&timestamp, &Iso8601::PARSING)
+                    .is_ok_and(|value| value.offset().whole_seconds().abs() < 86_400)
+            }
+            Some(_) => PrimitiveDateTime::parse(&timestamp, &Iso8601::PARSING).is_ok(),
+            None => Date::parse(&timestamp, &Iso8601::PARSING).is_ok(),
+        }
+    });
+    if !valid {
+        return Err(ParseError::new(
+            format!("{path}.timestamp"),
+            "expected a valid ISO 8601 timestamp",
+        ));
+    }
+    Ok(())
+}
+
+/// Restricts non-null model, reasoning, tool-call, and metric fields to agent steps.
+fn validate_agent_fields(step: &Step, path: &str) -> Result<(), ParseError> {
+    if step.source != StepSource::Agent {
+        for field in [
+            "model_name",
+            "reasoning_effort",
+            "reasoning_content",
+            "tool_calls",
+            "metrics",
+        ] {
+            if step
+                .additional_fields
+                .get(field)
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err(ParseError::new(
+                    format!("{path}.{field}"),
+                    "only allowed on agent steps",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Forbids metrics and reasoning content on agent steps that make no LLM calls.
+fn validate_llm_fields(step: &Step, path: &str) -> Result<(), ParseError> {
+    if step.source == StepSource::Agent
+        && step
+            .additional_fields
+            .get("llm_call_count")
+            .and_then(Value::as_u64)
+            == Some(0)
+    {
+        for field in ["metrics", "reasoning_content"] {
+            if step
+                .additional_fields
+                .get(field)
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err(ParseError::new(
+                    format!("{path}.{field}"),
+                    "not allowed when an agent step has llm_call_count = 0",
+                ));
+            }
         }
     }
     Ok(())

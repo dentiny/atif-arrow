@@ -43,8 +43,8 @@ println!("{}", parsed.trajectory.agent.name);
 
 `parse_trajectory` accepts exactly one JSON document. It checks required core
 fields and types, ATIF v1.0–v1.8, step sources, nonempty sequential steps starting
-at 1, and the session ID required through v1.6. Errors include field paths such
-as `steps[0].step_id`.
+at 1, the session ID required through v1.6, timestamp syntax, and the step field
+restrictions described below. Errors include field paths such as `steps[0].step_id`.
 
 The result preserves the original input through `raw_json()` and unmodeled fields
 through `additional_fields`. Multimodal parts remain JSON values at parsing time;
@@ -196,7 +196,7 @@ Conversion follows the fixed ATIF schema; it does not infer arbitrary JSON schem
 | Numeric columns | `Int64`, `UInt64`, `Float64` |
 | Nested objects | `Struct` |
 | Arrays, including object arrays | `List`, including `List<Struct>` |
-| Timestamps | `Utf8`, preserving the original text without parsing or timezone conversion |
+| Timestamps | `Utf8`, preserving the validated original text without timezone conversion |
 | Dynamic JSON payloads and embedded subagents | JSON text in `Utf8` columns |
 
 Optional fields support null values; empty collections remain distinct from null.
@@ -212,9 +212,10 @@ The current converter does not produce these native Arrow types:
 
 These types would require explicit additions to the schema and conversion mapping.
 
-Timestamp syntax and agent-only / `llm_call_count` cross-field rules remain
-unchecked. Parsing checks core fields; conversion applies the additional checks
-described above.
+Parsing validates ISO 8601 timestamps, restricts agent-only fields to agent steps,
+and forbids metrics or reasoning content on agent steps with `llm_call_count = 0`.
+Missing and null fields are treated as unset. Conversion revalidates these rules,
+including embedded subagents, and applies the additional checks described above.
 
 ## Development
 

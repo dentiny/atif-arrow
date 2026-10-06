@@ -7,7 +7,7 @@ const DOCUMENT: &str = r#"{
   "schema_version": "ATIF-v1.8",
   "agent": {"name": "example", "version": "1", "tool_definitions": []},
   "steps": [
-    {"step_id": 1, "source": "user", "message": ""},
+    {"step_id": 1, "source": "user", "message": "", "timestamp": "2024-02-29T12:34:56.123456789012+05:30"},
     {"step_id": 2, "source": "agent", "message": [{"type":"text","text":"done"}],
      "tool_calls": [{"tool_call_id":"call-1","function_name":"run",
        "arguments":{"id":123456789012345678901234567890}}],
@@ -44,6 +44,10 @@ fn converts_text_tools_and_metrics_without_losing_original_data() {
     assert_eq!(row["final_metrics"]["total_steps"], 2);
     let steps = row["steps"].as_array().unwrap();
     assert_eq!(steps.len(), 2);
+    assert_eq!(
+        steps[0]["timestamp"],
+        "2024-02-29T12:34:56.123456789012+05:30"
+    );
     assert_eq!(
         steps[0]["message"],
         json!([{"type":"text","text":"","source":null}])
@@ -90,6 +94,7 @@ fn converts_text_tools_and_metrics_without_losing_original_data() {
 fn preserves_missing_null_and_empty_optional_values() {
     for value in [None, Some(Value::Null), Some(json!([]))] {
         let mut document: Value = serde_json::from_str(DOCUMENT).unwrap();
+        document["steps"][0]["source"] = json!("agent");
         if let Some(value) = &value {
             document["steps"][0]["tool_calls"] = value.clone();
         }
@@ -273,6 +278,24 @@ fn preserves_subagents_and_validates_nested_documents_and_references() {
             to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1).unwrap_err();
         assert!(matches!(error, ConversionError::Field(_)));
     }
+    // Embedded steps use the same rules and report the full child field path.
+    for (field, value, expected_field) in [
+        ("timestamp", json!("2023-02-29T12:34:56Z"), "timestamp"),
+        ("source", json!("user"), "metrics"),
+        ("llm_call_count", json!(0), "metrics"),
+    ] {
+        let mut invalid = document.clone();
+        invalid["subagent_trajectories"][0]["steps"][0][field] = value;
+        let error =
+            to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1).unwrap_err();
+        match error {
+            ConversionError::Field(error) => assert_eq!(
+                error.path,
+                format!("subagent_trajectories[0].steps[0].{expected_field}")
+            ),
+            error => panic!("expected field error, got {error}"),
+        }
+    }
     // Legacy session-only references remain valid; missing legacy session IDs fail.
     document
         .as_object_mut()
@@ -308,4 +331,29 @@ fn batch_builder_requires_flushing_and_can_be_reused() {
     let row = output_row(&builder.flush().unwrap().unwrap());
     assert_eq!(row["source_record_index"], 3);
     assert_eq!(row["raw_json"], DOCUMENT);
+}
+
+#[test]
+fn conversion_revalidates_step_rules_after_mutating_parsed_input() {
+    for (field, value, expected_field) in [
+        ("timestamp", json!("invalid"), "timestamp"),
+        ("llm_call_count", json!(0), "metrics"),
+    ] {
+        let mut parsed = parse_trajectory(DOCUMENT).unwrap();
+        parsed.trajectory.steps[1]
+            .additional_fields
+            .insert(field.into(), value);
+        match to_record_batch(&parsed, None, 1).unwrap_err() {
+            ConversionError::Field(error) => {
+                assert_eq!(error.path, format!("steps[1].{expected_field}"))
+            }
+            error => panic!("expected field error, got {error}"),
+        }
+    }
+    let mut parsed = parse_trajectory(DOCUMENT).unwrap();
+    parsed.trajectory.steps[1].source = atif_arrow::StepSource::User;
+    assert!(matches!(
+        to_record_batch(&parsed, None, 1),
+        Err(ConversionError::Field(_))
+    ));
 }
