@@ -1,11 +1,11 @@
 # ATIF Arrow
 
 A Rust workspace for converting ATIF agent trajectory documents into Arrow.
-The library provides a fixed Arrow schema, core ATIF parsing, and text trajectory conversion.
+The library provides a fixed Arrow schema, core ATIF parsing, and trajectory conversion.
 
 | Crate | Responsibility |
 | --- | --- |
-| `atif-arrow` | Arrow schema, parsing, and text conversion; batch reading follows. |
+| `atif-arrow` | Arrow schema, parsing, and conversion; batch reading follows. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -45,8 +45,8 @@ at 1, and the session ID required through v1.6. Errors include field paths such
 as `steps[0].step_id`.
 
 The result preserves the original input through `raw_json()` and unmodeled fields
-through `additional_fields`. Multimodal parts remain opaque JSON; detailed
-validation of those parts, tool calls, metrics, and subagents follows separately.
+through `additional_fields`. Multimodal parts remain JSON values at parsing time;
+conversion validates their content and embedded subagent documents.
 
 ## Conversion API
 
@@ -64,10 +64,26 @@ Text messages and observations become content-part lists; tool arguments and
 other JSON payloads stay serialized JSON. Optional nulls and empty collections
 remain distinct, and `raw_json` preserves the original document.
 
-Conversion rejects incompatible field types, integer overflow, non-finite floats,
-and image/audio content. Embedded subagents are retained as opaque JSON; detailed
-ATIF relationship and version-specific validation follows separately. The JSON
-normalization uses the schema, and Arrow constructs the nested arrays.
+Conversion supports ordered text/image/audio parts in messages and observations.
+It checks content/source compatibility, supported MIME types, required media paths,
+and finite nonnegative audio duration. Harbor's common audio MIME aliases are
+accepted; MIME spelling and paths remain unchanged. No media files are fetched.
+Content arrays require ATIF v1.6+, and audio requires v1.8+.
+
+Embedded subagents remain complete JSON documents in one column. Conversion
+recursively checks their core fields, mapped field types, content, and references.
+Embedding requires ATIF v1.7+: each child needs a unique `trajectory_id` within
+its parent's array; sibling `session_id`s may repeat or be omitted.
+
+In v1.7+, a subagent reference needs `trajectory_id` or `trajectory_path`. An
+ID-only reference must match an embedded child in the same document. External
+paths are retained without loading files. Pre-v1.7 references require `session_id`
+and may omit `trajectory_path`. Observation `source_call_id`s must match a tool
+call in the same step.
+
+Conversion also rejects incompatible field types, integer overflow, and non-finite
+numeric columns. JSON normalization uses the schema, and Arrow constructs the
+nested arrays.
 
 ## Supported types and limitations
 
@@ -96,9 +112,9 @@ The current converter does not produce these native Arrow types:
 
 These types would require explicit additions to the schema and conversion mapping.
 
-Image/audio message and observation conversion is still pending. Embedded
-subagents are retained as opaque JSON; detailed subagent, relationship, and
-version-specific validation is also pending.
+Timestamp syntax and agent-only / `llm_call_count` cross-field rules remain
+unchecked. Parsing checks core fields; conversion applies the additional checks
+described above.
 
 ## Development
 
@@ -109,5 +125,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The CLI is a scaffold and currently exits with a not-implemented message.
-Subsequent changes add multimodal conversion and detailed subagent validation,
-batch reading, then CLI commands and Arrow IPC export.
+Subsequent changes add batch reading, then CLI commands and Arrow IPC export.

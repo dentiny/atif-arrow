@@ -4,18 +4,18 @@ use arrow_schema::{DataType, Field, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    trajectory_schema, validation::validate_core, ConversionError, ParseError, ParsedTrajectory,
+    trajectory_schema, validation::validate_details, ConversionError, ParseError, ParsedTrajectory,
 };
 
 /// Converts one parsed document into one Arrow row, with caller-supplied source identity.
 ///
-/// The record index is one-based. Only text content is supported at this stage.
+/// The record index is one-based. Media references remain unchanged; no files are fetched.
 pub fn to_record_batch(
     parsed: &ParsedTrajectory,
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    validate_core(&parsed.trajectory).map_err(ConversionError::Field)?;
+    validate_details(&parsed.trajectory, "").map_err(ConversionError::Field)?;
     if source_record_index == 0 {
         return Err(ConversionError::Field(ParseError::new(
             "source_record_index",
@@ -95,6 +95,26 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
             _ => value.is_object(),
         };
         return if valid {
+            if field.name() == "subagent_trajectories_json" {
+                // Validate each embedded document with the same field mapping, without
+                // source metadata columns. Keep the original embedded JSON in the output.
+                let schema = trajectory_schema();
+                let fields: Fields = schema
+                    .fields()
+                    .iter()
+                    .filter(|field| {
+                        !matches!(
+                            field.name().as_str(),
+                            "source_uri" | "source_record_index" | "raw_json"
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into();
+                for (index, child) in value.as_array().into_iter().flatten().enumerate() {
+                    normalize_object(&fields, child, &format!("{path}[{index}]"))?;
+                }
+            }
             Ok(Value::String(value.to_string()))
         } else {
             Err(ConversionError::Field(ParseError::new(
@@ -116,26 +136,6 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
             let mut output = Vec::with_capacity(items.len());
             for (index, value) in items.iter().enumerate() {
                 let item_path = format!("{path}[{index}]");
-                if content {
-                    if value.get("type").and_then(Value::as_str) != Some("text") {
-                        return Err(ConversionError::Field(ParseError::new(
-                            format!("{item_path}.type"),
-                            "only text content is supported",
-                        )));
-                    }
-                    if !value.get("text").is_some_and(Value::is_string) {
-                        return Err(ConversionError::Field(ParseError::new(
-                            format!("{item_path}.text"),
-                            "text content requires a string",
-                        )));
-                    }
-                    if value.get("source").is_some_and(|source| !source.is_null()) {
-                        return Err(ConversionError::Field(ParseError::new(
-                            format!("{item_path}.source"),
-                            "text content cannot contain a media source",
-                        )));
-                    }
-                }
                 output.push(normalize_field(item, value, &item_path)?);
             }
             Ok(Value::Array(output))
