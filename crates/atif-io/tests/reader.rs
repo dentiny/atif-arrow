@@ -1,7 +1,8 @@
 use std::{error::Error, io::Cursor};
 
 use arrow_json::{writer::LineDelimited, WriterBuilder};
-use atif_arrow::{trajectory_schema, InputFormat, ReadError, TrajectoryReader};
+use atif_arrow::trajectory_schema;
+use atif_io::{InputFormat, ReadError, TrajectoryReader};
 use serde_json::{json, Value};
 
 const DOCUMENT: &str = r#"{"schema_version":"ATIF-v1.8","agent":{"name":"test","version":"1"},"steps":[{"step_id":1,"source":"user","message":"hello"}]}"#;

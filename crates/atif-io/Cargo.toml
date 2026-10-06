@@ -1,0 +1,15 @@
+[package]
+name = "atif-io"
+description = "JSON and JSONL trajectory readers for ATIF to Arrow conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+atif-arrow.workspace = true
+arrow-array.workspace = true
+
+[dev-dependencies]
+arrow-json.workspace = true
+serde_json.workspace = true

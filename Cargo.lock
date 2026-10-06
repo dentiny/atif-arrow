@@ -167,6 +167,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atif-io"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-json",
+ "atif-arrow",
+ "serde_json",
+]
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
