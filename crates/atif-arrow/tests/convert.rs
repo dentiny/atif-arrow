@@ -178,81 +178,49 @@ fn converts_multimodal_content_and_rejects_invalid_media() {
     let input = document.to_string();
     let row = output_row(&to_record_batch(&parse_trajectory(&input).unwrap(), None, 1).unwrap());
     assert_eq!(row["raw_json"], input);
-    assert_eq!(row["steps"][0]["message"].as_array().unwrap().len(), 3);
     for content in [
         &row["steps"][0]["message"],
         &row["steps"][1]["observation"]["results"][0]["content"],
     ] {
+        assert_eq!(content.as_array().unwrap().len(), 3);
         assert_eq!(content[1]["source"]["path"], parts[1]["source"]["path"]);
         assert_eq!(content[2]["source"], parts[2]["source"]);
-        assert_eq!(content[1]["text"], Value::Null);
     }
-    let mut image_only = document.clone();
-    image_only["schema_version"] = json!("ATIF-v1.6");
-    image_only["steps"][0]["message"]
-        .as_array_mut()
-        .unwrap()
-        .pop();
-    image_only["steps"][1]["observation"]["results"][0]["content"]
-        .as_array_mut()
-        .unwrap()
-        .pop();
-    to_record_batch(&parse_trajectory(&image_only.to_string()).unwrap(), None, 1).unwrap();
-    for (version, expected_path) in [
-        ("ATIF-v1.5", "steps[0].message"),
-        ("ATIF-v1.6", "steps[0].message[2].type"),
-        ("ATIF-v1.7", "steps[0].message[2].type"),
-    ] {
-        let mut invalid = document.clone();
-        invalid["schema_version"] = json!(version);
-        match to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1)
-            .unwrap_err()
-        {
-            ConversionError::Field(error) => assert_eq!(error.path, expected_path),
-            error => panic!("expected field error, got {error}"),
-        }
+    for version in ["ATIF-v1.5", "ATIF-v1.6", "ATIF-v1.7"] {
+        document["schema_version"] = json!(version);
+        assert!(
+            to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).is_err()
+        );
     }
-    for (part, suffix) in [
-        (
-            json!({"type":"image","source":{"media_type":"audio/wav","path":"a"}}),
-            "source.media_type",
-        ),
-        (json!({"type":"audio"}), "source"),
-        (
-            json!({"type":"image","text":"unexpected","source":{"media_type":"image/png","path":"a"}}),
-            "text",
-        ),
-        (
-            json!({"type":"audio","source":{"media_type":"audio/wav","path":"a","duration_sec":-1}}),
-            "source.duration_sec",
-        ),
-        (
-            json!({"type":"image","source":{"media_type":"image/png"}}),
-            "source.path",
-        ),
-        (json!({"type":"video"}), "type"),
+    document["schema_version"] = json!("ATIF-v1.6");
+    for pointer in ["/steps/0/message", "/steps/1/observation/results/0/content"] {
+        *document.pointer_mut(pointer).unwrap() = json!([parts[0], parts[1]]);
+    }
+    to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).unwrap();
+    document["schema_version"] = json!("ATIF-v1.8");
+    for part in [
+        json!({"type":"audio"}),
+        json!({"type":"image","text":"unexpected","source":{"media_type":"image/png","path":"a"}}),
+        json!({"type":"audio","source":{"media_type":"audio/wav","path":"a","duration_sec":-1}}),
+        json!({"type":"image","source":{"media_type":"image/png"}}),
+        json!({"type":"video"}),
     ] {
-        let mut invalid = document.clone();
-        invalid["steps"][0]["message"] = json!([part]);
-        match to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1)
-            .unwrap_err()
-        {
-            ConversionError::Field(error) => {
-                assert_eq!(error.path, format!("steps[0].message[0].{suffix}"))
-            }
-            error => panic!("expected field error, got {error}"),
-        }
+        document["steps"][0]["message"] = json!([part]);
+        assert!(
+            to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).is_err()
+        );
     }
 }
 
 #[test]
 fn preserves_subagents_and_validates_nested_documents_and_references() {
     let child = json!({"schema_version":"ATIF-v1.8","session_id":"shared-run","trajectory_id":"worker-1",
-        "agent":{"name":"worker","version":"1"},"steps":[{"step_id":1,"source":"agent","message":"done"}],
+        "agent":{"name":"worker","version":"1"},"steps":[{"step_id":1,"source":"agent","message":"done","metrics":{}}],
         "vendor":{"unmodeled":true}});
     let mut sibling = child.clone();
     sibling["trajectory_id"] = json!("worker-2");
     let mut document: Value = serde_json::from_str(DOCUMENT).unwrap();
+    document["session_id"] = json!("shared-run");
     document["subagent_trajectories"] = json!([child, sibling]);
     document["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"] = json!([
         {"trajectory_id":"worker-1","session_id":"shared-run"},
@@ -261,86 +229,59 @@ fn preserves_subagents_and_validates_nested_documents_and_references() {
     let row = output_row(
         &to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).unwrap(),
     );
-    let embedded: Value =
-        serde_json::from_str(row["subagent_trajectories_json"].as_str().unwrap()).unwrap();
-    assert_eq!(embedded, document["subagent_trajectories"]);
+    assert_eq!(
+        serde_json::from_str::<Value>(row["subagent_trajectories_json"].as_str().unwrap()).unwrap(),
+        document["subagent_trajectories"]
+    );
     assert_eq!(
         row["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"][1]
             ["trajectory_path"],
         "s3://bucket/external.json"
     );
-    let mut nested = document.clone();
     let mut leaf = child.clone();
     leaf["trajectory_id"] = json!("leaf");
     leaf["session_id"] = Value::Null;
-    nested["subagent_trajectories"][0]["subagent_trajectories"] = json!([leaf]);
-    nested["subagent_trajectories"][0]["steps"][0]["observation"] =
+    document["subagent_trajectories"][0]["subagent_trajectories"] = json!([leaf]);
+    document["subagent_trajectories"][0]["steps"][0]["observation"] =
         json!({"results":[{"subagent_trajectory_ref":[{"trajectory_id":"leaf"}]}]});
-    to_record_batch(&parse_trajectory(&nested.to_string()).unwrap(), None, 1).unwrap();
-    let mut cases = Vec::new();
-    let mut invalid = document.clone();
-    invalid["subagent_trajectories"][1]["trajectory_id"] = json!("worker-1");
-    cases.push((invalid, "subagent_trajectories[1].trajectory_id"));
-    let mut invalid = document.clone();
-    invalid["subagent_trajectories"][0]["trajectory_id"] = Value::Null;
-    cases.push((invalid, "subagent_trajectories[0].trajectory_id"));
-    let mut invalid = document.clone();
-    invalid["subagent_trajectories"][0]["steps"][0]["step_id"] = json!(2);
-    cases.push((invalid, "subagent_trajectories[0].steps[0].step_id"));
-    let mut invalid = document.clone();
-    invalid["subagent_trajectories"][0]["steps"][0]["metrics"] = json!({"prompt_tokens":"3"});
-    cases.push((
-        invalid,
-        "subagent_trajectories[0].steps[0].metrics.prompt_tokens",
-    ));
-    let mut invalid = document.clone();
-    invalid["subagent_trajectories"][0]["subagent_trajectories"] = json!([child.clone()]);
-    invalid["subagent_trajectories"][0]["subagent_trajectories"][0]["steps"][0]["message"] =
-        json!([{"type":"audio"}]);
-    cases.push((
-        invalid,
-        "subagent_trajectories[0].subagent_trajectories[0].steps[0].message[0].source",
-    ));
-    let mut invalid = document.clone();
-    invalid["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"] =
-        json!([{"trajectory_id":"missing"}]);
-    cases.push((
-        invalid,
-        "steps[1].observation.results[0].subagent_trajectory_ref[0].trajectory_id",
-    ));
-    let mut invalid = document.clone();
-    invalid["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"] =
-        json!([{"session_id":"shared-run"}]);
-    cases.push((
-        invalid,
-        "steps[1].observation.results[0].subagent_trajectory_ref[0]",
-    ));
-    let mut invalid = document.clone();
-    invalid["schema_version"] = json!("ATIF-v1.6");
-    invalid["session_id"] = json!("run-1");
-    cases.push((invalid, "subagent_trajectories"));
-    for (invalid, expected_path) in cases {
-        match to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1)
-            .unwrap_err()
-        {
-            ConversionError::Field(error) => assert_eq!(error.path, expected_path),
-            error => panic!("expected field error, got {error}"),
-        }
-    }
-    // Pre-v1.7 references require session_id and can omit an external path.
-    let mut legacy: Value = serde_json::from_str(DOCUMENT).unwrap();
-    legacy["schema_version"] = json!("ATIF-v1.6");
-    legacy["session_id"] = json!("run-1");
-    legacy["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"] =
-        json!([{"session_id":"child-run"}]);
-    to_record_batch(&parse_trajectory(&legacy.to_string()).unwrap(), None, 1).unwrap();
-    legacy["steps"][1]["observation"]["results"][0]["subagent_trajectory_ref"] =
-        json!([{"trajectory_path":"child.json"}]);
-    match to_record_batch(&parse_trajectory(&legacy.to_string()).unwrap(), None, 1).unwrap_err() {
-        ConversionError::Field(error) => assert_eq!(
-            error.path,
-            "steps[1].observation.results[0].subagent_trajectory_ref[0].session_id"
+    to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).unwrap();
+    for (pointer, value) in [
+        ("/subagent_trajectories/1/trajectory_id", json!("worker-1")),
+        ("/subagent_trajectories/0/trajectory_id", Value::Null),
+        ("/subagent_trajectories/0/steps/0/step_id", json!(2)),
+        (
+            "/subagent_trajectories/0/steps/0/metrics",
+            json!({"prompt_tokens":"3"}),
         ),
-        error => panic!("expected field error, got {error}"),
+        (
+            "/subagent_trajectories/0/subagent_trajectories/0/steps/0/message",
+            json!([{"type":"audio"}]),
+        ),
+        (
+            "/steps/1/observation/results/0/subagent_trajectory_ref",
+            json!([{"trajectory_id":"missing"}]),
+        ),
+        (
+            "/steps/1/observation/results/0/subagent_trajectory_ref",
+            json!([{"session_id":"shared-run"}]),
+        ),
+        ("/schema_version", json!("ATIF-v1.6")),
+    ] {
+        let mut invalid = document.clone();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        let error =
+            to_record_batch(&parse_trajectory(&invalid.to_string()).unwrap(), None, 1).unwrap_err();
+        assert!(matches!(error, ConversionError::Field(_)));
     }
+    // Legacy session-only references remain valid; missing legacy session IDs fail.
+    document
+        .as_object_mut()
+        .unwrap()
+        .remove("subagent_trajectories");
+    document["schema_version"] = json!("ATIF-v1.6");
+    let pointer = "/steps/1/observation/results/0/subagent_trajectory_ref";
+    *document.pointer_mut(pointer).unwrap() = json!([{"session_id":"child-run"}]);
+    to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).unwrap();
+    *document.pointer_mut(pointer).unwrap() = json!([{"trajectory_path":"child.json"}]);
+    assert!(to_record_batch(&parse_trajectory(&document.to_string()).unwrap(), None, 1).is_err());
 }

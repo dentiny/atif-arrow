@@ -39,7 +39,21 @@ pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
     Ok(())
 }
 
-/// Recursively validates multimodal content, embedded identities, and subagent references.
+/// Deserializes an embedded document and validates its core fields and relationships.
+pub(crate) fn validate_embedded(value: &Value, path: &str) -> Result<(), ParseError> {
+    let trajectory: Trajectory = serde_path_to_error::deserialize(value).map_err(|error| {
+        let mut error = ParseError::new(error.path().to_string(), error.inner().to_string());
+        error.path = if error.path == "$" {
+            path.into()
+        } else {
+            format!("{path}.{}", error.path)
+        };
+        error
+    })?;
+    validate_details(&trajectory, path)
+}
+
+/// Checks document relationships after schema normalization has checked field types.
 pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<(), ParseError> {
     let prefix = if path.is_empty() {
         String::new()
@@ -50,48 +64,26 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
         error.path = format!("{prefix}{}", error.path);
         error
     })?;
-    // validate_core has already checked the exact ATIF-v1.0 through ATIF-v1.8 spelling.
+    // The exact version spelling was checked by validate_core.
     let minor = trajectory.schema_version.as_bytes()[8] - b'0';
-    let mut embedded_ids = HashSet::new();
-    if let Some(value) = trajectory
+    let embedded = trajectory
         .additional_fields
         .get("subagent_trajectories")
-        .filter(|value| !value.is_null())
-    {
-        let field_path = format!("{prefix}subagent_trajectories");
-        if minor < 7 {
-            return Err(ParseError::new(
-                field_path,
-                "embedded subagents require ATIF v1.7 or later",
-            ));
-        }
-        let children = value
-            .as_array()
-            .ok_or_else(|| ParseError::new(&field_path, "expected an array"))?;
-        for (index, value) in children.iter().enumerate() {
-            let child_path = format!("{field_path}[{index}]");
-            let child: Trajectory = serde_path_to_error::deserialize(value).map_err(|error| {
-                let location = error.path().to_string();
-                let location = if matches!(location.as_str(), "" | "." | "?") {
-                    child_path.clone()
-                } else {
-                    format!("{child_path}.{location}")
-                };
-                ParseError::new(location, error.inner().to_string())
-            })?;
-            let id = child.trajectory_id.as_ref().ok_or_else(|| {
-                ParseError::new(
-                    format!("{child_path}.trajectory_id"),
-                    "required for embedded subagents",
-                )
-            })?;
-            if !embedded_ids.insert(id.clone()) {
-                return Err(ParseError::new(
-                    format!("{child_path}.trajectory_id"),
-                    "duplicate embedded trajectory ID",
-                ));
-            }
-            validate_details(&child, &child_path)?;
+        .unwrap_or(&Value::Null);
+    if !embedded.is_null() && minor < 7 {
+        return Err(ParseError::new(
+            format!("{prefix}subagent_trajectories"),
+            "embedded subagents require ATIF v1.7 or later",
+        ));
+    }
+    let mut ids = HashSet::new();
+    for (index, child) in embedded.as_array().into_iter().flatten().enumerate() {
+        let id_path = format!("{prefix}subagent_trajectories[{index}].trajectory_id");
+        let id = child["trajectory_id"]
+            .as_str()
+            .ok_or_else(|| ParseError::new(&id_path, "required for embedded subagents"))?;
+        if !ids.insert(id) {
+            return Err(ParseError::new(id_path, "duplicate embedded trajectory ID"));
         }
     }
     for (index, step) in trajectory.steps.iter().enumerate() {
@@ -99,67 +91,43 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
         if let Message::Parts(parts) = &step.message {
             validate_content(parts, minor, &format!("{step_path}.message"))?;
         }
-        let Some(results) = step
+        let results = step
             .additional_fields
             .get("observation")
-            .and_then(|observation| observation.get("results"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
-        for (index, result) in results.iter().enumerate() {
+            .and_then(|value| value.get("results"))
+            .and_then(Value::as_array);
+        let calls = step
+            .additional_fields
+            .get("tool_calls")
+            .and_then(Value::as_array);
+        for (index, result) in results.into_iter().flatten().enumerate() {
             let result_path = format!("{step_path}.observation.results[{index}]");
-            if let Some(parts) = result.get("content").and_then(Value::as_array) {
+            if let Some(parts) = result["content"].as_array() {
                 validate_content(parts, minor, &format!("{result_path}.content"))?;
             }
-            if let Some(call_id) = result.get("source_call_id").and_then(Value::as_str) {
-                let found = step
-                    .additional_fields
-                    .get("tool_calls")
-                    .and_then(Value::as_array)
-                    .is_some_and(|calls| {
-                        calls.iter().any(|call| {
-                            call.get("tool_call_id").and_then(Value::as_str) == Some(call_id)
-                        })
-                    });
-                if !found {
+            if let Some(id) = result["source_call_id"].as_str() {
+                if !calls
+                    .into_iter()
+                    .flatten()
+                    .any(|call| call["tool_call_id"].as_str() == Some(id))
+                {
                     return Err(ParseError::new(
                         format!("{result_path}.source_call_id"),
                         "must reference a tool call in the same step",
                     ));
                 }
             }
-            let Some(value) = result
-                .get("subagent_trajectory_ref")
-                .filter(|value| !value.is_null())
-            else {
-                continue;
-            };
-            let refs_path = format!("{result_path}.subagent_trajectory_ref");
-            let references = value
+            for (index, reference) in result["subagent_trajectory_ref"]
                 .as_array()
-                .ok_or_else(|| ParseError::new(&refs_path, "expected an array"))?;
-            for (index, reference) in references.iter().enumerate() {
-                let ref_path = format!("{refs_path}[{index}]");
-                if !reference.is_object() {
-                    return Err(ParseError::new(&ref_path, "expected an object"));
-                }
-                for name in ["trajectory_id", "session_id", "trajectory_path"] {
-                    if reference
-                        .get(name)
-                        .is_some_and(|value| !value.is_null() && !value.is_string())
-                    {
-                        return Err(ParseError::new(
-                            format!("{ref_path}.{name}"),
-                            "expected a string",
-                        ));
-                    }
-                }
-                let id = reference.get("trajectory_id").and_then(Value::as_str);
-                let file = reference.get("trajectory_path").and_then(Value::as_str);
-                let session = reference.get("session_id").and_then(Value::as_str);
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let ref_path = format!("{result_path}.subagent_trajectory_ref[{index}]");
+                let id = reference["trajectory_id"].as_str();
+                let file = reference["trajectory_path"].as_str();
                 if minor < 7 {
-                    if session.is_none() {
+                    if reference["session_id"].is_null() {
                         return Err(ParseError::new(
                             format!("{ref_path}.session_id"),
                             "required in ATIF v1.6 and earlier",
@@ -167,10 +135,10 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
                     }
                 } else if id.is_none() && file.is_none() {
                     return Err(ParseError::new(
-                        &ref_path,
+                        ref_path,
                         "set trajectory_id or trajectory_path; session_id is not a resolution key",
                     ));
-                } else if file.is_none() && !id.is_some_and(|id| embedded_ids.contains(id)) {
+                } else if file.is_none() && !id.is_some_and(|id| ids.contains(id)) {
                     return Err(ParseError::new(
                         format!("{ref_path}.trajectory_id"),
                         "must match an embedded subagent in this document",
@@ -182,7 +150,7 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
     Ok(())
 }
 
-/// Validates ordered text/image/audio parts against the declaring document's ATIF version.
+/// Checks version and content/source rules; the schema already checked field types.
 fn validate_content(parts: &[Value], minor: u8, path: &str) -> Result<(), ParseError> {
     if minor < 6 {
         return Err(ParseError::new(
@@ -191,69 +159,17 @@ fn validate_content(parts: &[Value], minor: u8, path: &str) -> Result<(), ParseE
         ));
     }
     for (index, part) in parts.iter().enumerate() {
-        let path = format!("{path}[{index}]");
-        let kind = part.get("type").and_then(Value::as_str).ok_or_else(|| {
-            ParseError::new(format!("{path}.type"), "expected text, image, or audio")
-        })?;
-        let text = part.get("text").filter(|value| !value.is_null());
-        let source = part.get("source").filter(|value| !value.is_null());
-        if kind == "text" {
-            if !text.is_some_and(Value::is_string) {
-                return Err(ParseError::new(
-                    format!("{path}.text"),
-                    "text content requires a string",
-                ));
-            }
-            if source.is_some() {
-                return Err(ParseError::new(
-                    format!("{path}.source"),
-                    "text content cannot contain a media source",
-                ));
-            }
-            continue;
-        }
-        if !matches!(kind, "image" | "audio") {
-            return Err(ParseError::new(
-                format!("{path}.type"),
-                "expected text, image, or audio",
-            ));
-        }
-        if kind == "audio" && minor < 8 {
-            return Err(ParseError::new(
-                format!("{path}.type"),
-                "audio requires ATIF v1.8 or later",
-            ));
-        }
-        if text.is_some() {
-            return Err(ParseError::new(
-                format!("{path}.text"),
-                "media content cannot contain text",
-            ));
-        }
-        let source = source.and_then(Value::as_object).ok_or_else(|| {
-            ParseError::new(
-                format!("{path}.source"),
-                "media content requires a source object",
-            )
-        })?;
-        let media_type = source
-            .get("media_type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ParseError::new(
-                    format!("{path}.source.media_type"),
-                    "expected a MIME type string",
-                )
-            })?;
-        let valid = if kind == "image" {
-            matches!(
-                media_type,
+        let kind = part["type"].as_str().unwrap_or_default();
+        let source = &part["source"];
+        let mime = source["media_type"].as_str().unwrap_or_default();
+        let valid_mime = match kind {
+            "image" => matches!(
+                mime,
                 "image/jpeg" | "image/png" | "image/gif" | "image/webp"
-            )
-        } else {
-            // Harbor accepts common audio MIME aliases; retain the original spelling in Arrow.
-            matches!(
-                media_type.trim().to_ascii_lowercase().as_str(),
+            ),
+            // Accept Harbor's aliases, while preserving the original MIME spelling.
+            "audio" => matches!(
+                mime.trim().to_ascii_lowercase().as_str(),
                 "audio/wav"
                     | "audio/mpeg"
                     | "audio/mp4"
@@ -273,31 +189,41 @@ fn validate_content(parts: &[Value], minor: u8, path: &str) -> Result<(), ParseE
                     | "audio/x-aac"
                     | "audio/x-flac"
                     | "audio/x-aiff"
-            )
+            ),
+            _ => false,
         };
-        if !valid {
-            return Err(ParseError::new(
-                format!("{path}.source.media_type"),
-                "MIME type does not match the content type",
-            ));
-        }
-        if !source.get("path").is_some_and(Value::is_string) {
-            return Err(ParseError::new(
-                format!("{path}.source.path"),
-                "media source requires a path string",
-            ));
-        }
-        if let Some(duration) = source.get("duration_sec").filter(|value| !value.is_null()) {
-            if kind != "audio"
-                || !duration
-                    .as_f64()
-                    .is_some_and(|duration| duration.is_finite() && duration >= 0.0)
-            {
-                return Err(ParseError::new(
-                    format!("{path}.source.duration_sec"),
-                    "only audio may have a finite, nonnegative duration",
-                ));
+        let issue = match kind {
+            "text" if part["text"].is_null() => Some(("text", "text content requires a string")),
+            "text" if !source.is_null() => {
+                Some(("source", "text content cannot contain a media source"))
             }
+            "text" => None,
+            "audio" if minor < 8 => Some(("type", "audio requires ATIF v1.8 or later")),
+            "image" | "audio" if !part["text"].is_null() => {
+                Some(("text", "media content cannot contain text"))
+            }
+            "image" | "audio" if source.is_null() => {
+                Some(("source", "media content requires a source object"))
+            }
+            "image" | "audio" if !valid_mime => Some((
+                "source.media_type",
+                "MIME type does not match the content type",
+            )),
+            "image" if !source["duration_sec"].is_null() => {
+                Some(("source.duration_sec", "only audio may have a duration"))
+            }
+            "audio"
+                if source["duration_sec"]
+                    .as_f64()
+                    .is_some_and(|duration| duration < 0.0) =>
+            {
+                Some(("source.duration_sec", "audio duration must be nonnegative"))
+            }
+            "image" | "audio" => None,
+            _ => Some(("type", "expected text, image, or audio")),
+        };
+        if let Some((field, message)) = issue {
+            return Err(ParseError::new(format!("{path}[{index}].{field}"), message));
         }
     }
     Ok(())

@@ -4,7 +4,9 @@ use arrow_schema::{DataType, Field, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    trajectory_schema, validation::validate_details, ConversionError, ParseError, ParsedTrajectory,
+    trajectory_schema,
+    validation::{validate_details, validate_embedded},
+    ConversionError, ParseError, ParsedTrajectory,
 };
 
 /// Converts one parsed document into one Arrow row, with caller-supplied source identity.
@@ -15,7 +17,6 @@ pub fn to_record_batch(
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    validate_details(&parsed.trajectory, "").map_err(ConversionError::Field)?;
     if source_record_index == 0 {
         return Err(ConversionError::Field(ParseError::new(
             "source_record_index",
@@ -30,6 +31,7 @@ pub fn to_record_batch(
 
     let schema = trajectory_schema();
     let row = normalize_object(schema.fields(), &document, "")?;
+    validate_details(&parsed.trajectory, "").map_err(ConversionError::Field)?;
     // Decode JSON text rather than serializing Value into Arrow's tape: arbitrary-
     // precision numbers must stay numbers, not Serde's private number representation.
     let encoded = row.to_string();
@@ -112,7 +114,9 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
                     .collect::<Vec<_>>()
                     .into();
                 for (index, child) in value.as_array().into_iter().flatten().enumerate() {
-                    normalize_object(&fields, child, &format!("{path}[{index}]"))?;
+                    let child_path = format!("{path}[{index}]");
+                    normalize_object(&fields, child, &child_path)?;
+                    validate_embedded(child, &child_path).map_err(ConversionError::Field)?;
                 }
             }
             Ok(Value::String(value.to_string()))
