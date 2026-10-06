@@ -16,6 +16,7 @@ async fn batches_jsonl_in_order_with_nested_values_and_provenance() {
     let mut document: Value = serde_json::from_str(DOCUMENT).unwrap();
     document["steps"][0]["message"] = json!([{"type":"image","source":{
         "media_type":"image/png","path":"image.png"}}]);
+    document["steps"][0]["source"] = json!("agent");
     document["steps"][0]["metrics"] =
         json!({"prompt_tokens": i64::MAX, "completion_token_ids":[1,2]});
     document["extra"] = serde_json::from_str(r#"{"id":123456789012345678901234567890}"#).unwrap();
