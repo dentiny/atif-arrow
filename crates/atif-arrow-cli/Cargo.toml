@@ -1,0 +1,15 @@
+[package]
+name = "atif-arrow-cli"
+description = "Command-line tools for ATIF to Arrow conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "atif-arrow"
+path = "src/main.rs"
+
+[dependencies]
+atif-arrow.workspace = true

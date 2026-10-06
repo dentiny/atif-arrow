@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/atif-arrow", "crates/atif-arrow-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/dentiny/atif-arrow"
+
+[workspace.dependencies]
+arrow-schema = "58"
+atif-arrow = { path = "crates/atif-arrow", version = "0.1.0" }
