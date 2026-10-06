@@ -1,12 +1,12 @@
 use arrow_array::RecordBatch;
 use arrow_json::ReaderBuilder;
-use arrow_schema::{DataType, Field, Fields};
+use arrow_schema::{DataType, Field, FieldRef, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
     trajectory_schema,
     validation::{validate_details, validate_embedded},
-    ConversionError, ParseError, ParsedTrajectory,
+    ConversionError, ParseError, ParsedTrajectory, Trajectory,
 };
 
 /// Converts one parsed document into one Arrow row, with caller-supplied source identity.
@@ -17,25 +17,13 @@ pub fn to_record_batch(
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    if source_record_index == 0 {
-        return Err(ConversionError::Field(ParseError::new(
-            "source_record_index",
-            "expected a one-based index",
-        )));
-    }
-    let mut document = serde_json::to_value(&parsed.trajectory)
-        .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))?;
-    document["source_uri"] = json!(source_uri);
-    document["source_record_index"] = json!(source_record_index);
-    document["raw_json"] = json!(parsed.raw_json());
-
-    let schema = trajectory_schema();
-    let row = normalize_object(schema.fields(), &document, "")?;
-    validate_details(&parsed.trajectory, "").map_err(ConversionError::Field)?;
-    // Decode JSON text rather than serializing Value into Arrow's tape: arbitrary-
-    // precision numbers must stay numbers, not Serde's private number representation.
-    let encoded = row.to_string();
-    let mut reader = ReaderBuilder::new(schema).build(encoded.as_bytes())?;
+    let encoded = encode_trajectory(
+        &parsed.trajectory,
+        parsed.raw_json(),
+        source_uri,
+        source_record_index,
+    )?;
+    let mut reader = ReaderBuilder::new(trajectory_schema()).build(encoded.as_bytes())?;
     reader
         .next()
         .ok_or_else(|| {
@@ -44,8 +32,49 @@ pub fn to_record_batch(
         .map_err(ConversionError::Arrow)
 }
 
+/// Validates and encodes a row for the single-row converter and streaming decoder.
+pub(crate) fn encode_trajectory(
+    trajectory: &Trajectory,
+    raw_json: &str,
+    source_uri: Option<&str>,
+    source_record_index: u64,
+) -> Result<String, ConversionError> {
+    if source_record_index == 0 {
+        return Err(ConversionError::Field(ParseError::new(
+            "source_record_index",
+            "expected a one-based index",
+        )));
+    }
+    let document = serde_json::to_value(trajectory)
+        .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))?;
+    let schema = trajectory_schema();
+    let mut row = normalize_object(document_fields(schema.fields()), &document, "")?;
+    validate_details(trajectory, "").map_err(ConversionError::Field)?;
+    // Add provenance after normalization so raw_json is not copied through both maps.
+    row["source_uri"] = json!(source_uri);
+    row["source_record_index"] = json!(source_record_index);
+    row["raw_json"] = json!(raw_json);
+    // Decode JSON text rather than serializing Value into Arrow's tape: arbitrary-
+    // precision numbers must stay numbers, not Serde's private number representation.
+    Ok(row.to_string())
+}
+
+/// Selects ATIF fields without the caller-supplied provenance columns.
+fn document_fields(fields: &Fields) -> impl Iterator<Item = &FieldRef> {
+    fields.iter().filter(|field| {
+        !matches!(
+            field.name().as_str(),
+            "source_uri" | "source_record_index" | "raw_json"
+        )
+    })
+}
+
 /// Projects ATIF fields onto the fixed schema; unknown fields remain in raw_json.
-fn normalize_object(fields: &Fields, value: &Value, path: &str) -> Result<Value, ConversionError> {
+fn normalize_object<'a>(
+    fields: impl IntoIterator<Item = &'a FieldRef>,
+    value: &Value,
+    path: &str,
+) -> Result<Value, ConversionError> {
     let object = value
         .as_object()
         .ok_or_else(|| ConversionError::Field(ParseError::new(path, "expected an object")))?;
@@ -53,7 +82,6 @@ fn normalize_object(fields: &Fields, value: &Value, path: &str) -> Result<Value,
     for field in fields {
         let name = match field.name().as_str() {
             "atif_schema_version" => "schema_version",
-            "raw_json" => "raw_json",
             name => name.strip_suffix("_json").unwrap_or(name),
         };
         let child_path = if path.is_empty() {
@@ -82,12 +110,11 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
             )))
         };
     }
-    if field.name() != "raw_json"
-        && field
-            .metadata()
-            .get("atif-arrow.encoding")
-            .map(String::as_str)
-            == Some("json")
+    if field
+        .metadata()
+        .get("atif-arrow.encoding")
+        .map(String::as_str)
+        == Some("json")
     {
         let valid = match field.name().as_str() {
             "reasoning_effort_json" => value.is_string() || value.is_number(),
@@ -101,21 +128,9 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
                 // Validate each embedded document with the same field mapping, without
                 // source metadata columns. Keep the original embedded JSON in the output.
                 let schema = trajectory_schema();
-                let fields: Fields = schema
-                    .fields()
-                    .iter()
-                    .filter(|field| {
-                        !matches!(
-                            field.name().as_str(),
-                            "source_uri" | "source_record_index" | "raw_json"
-                        )
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into();
                 for (index, child) in value.as_array().into_iter().flatten().enumerate() {
                     let child_path = format!("{path}[{index}]");
-                    normalize_object(&fields, child, &child_path)?;
+                    normalize_object(document_fields(schema.fields()), child, &child_path)?;
                     validate_embedded(child, &child_path).map_err(ConversionError::Field)?;
                 }
             }
@@ -128,7 +143,7 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         };
     }
     match field.data_type() {
-        DataType::Struct(fields) => normalize_object(fields, value, path),
+        DataType::Struct(fields) => normalize_object(fields.iter(), value, path),
         DataType::List(item) => {
             let content = matches!(field.name().as_str(), "message" | "content");
             if content && value.is_string() {
