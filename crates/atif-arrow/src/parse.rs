@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::error::ParseError;
+use crate::{error::ParseError, validation::validate_core};
 
 /// A parsed trajectory together with the original JSON document.
 #[derive(Debug)]
@@ -18,7 +18,7 @@ impl ParsedTrajectory {
 }
 
 /// Core ATIF envelope; remaining root fields are preserved as JSON values.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Trajectory {
     pub schema_version: String,
     pub session_id: Option<String>,
@@ -30,7 +30,7 @@ pub struct Trajectory {
 }
 
 /// Agent identity and configuration, with unmodeled fields retained.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Agent {
     pub name: String,
     pub version: String,
@@ -40,7 +40,7 @@ pub struct Agent {
 }
 
 /// An interaction's core fields; tool calls, metrics, and other payloads remain JSON.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Step {
     pub step_id: u64,
     pub source: StepSource,
@@ -50,7 +50,7 @@ pub struct Step {
 }
 
 /// The three interaction sources defined by ATIF.
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StepSource {
     System,
@@ -59,7 +59,7 @@ pub enum StepSource {
 }
 
 /// Text or opaque multimodal parts, to be validated and normalized separately.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Message {
     Text(String),
@@ -79,39 +79,4 @@ pub fn parse_trajectory(input: &str) -> Result<ParsedTrajectory, ParseError> {
         trajectory,
         raw_json: input.to_owned(),
     })
-}
-
-/// Validates supported versions, legacy session identity, and sequential step IDs.
-fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
-    match trajectory.schema_version.as_str() {
-        "ATIF-v1.0" | "ATIF-v1.1" | "ATIF-v1.2" | "ATIF-v1.3" | "ATIF-v1.4" | "ATIF-v1.5"
-        | "ATIF-v1.6" => {
-            if trajectory.session_id.is_none() {
-                return Err(ParseError::new(
-                    "session_id",
-                    "required in ATIF v1.6 and earlier",
-                ));
-            }
-        }
-        "ATIF-v1.7" | "ATIF-v1.8" => {}
-        _ => {
-            return Err(ParseError::new(
-                "schema_version",
-                "expected ATIF-v1.0 through ATIF-v1.8",
-            ))
-        }
-    }
-    if trajectory.steps.is_empty() {
-        return Err(ParseError::new("steps", "at least one step is required"));
-    }
-    for (index, step) in trajectory.steps.iter().enumerate() {
-        let expected = index as u64 + 1;
-        if step.step_id != expected {
-            return Err(ParseError::new(
-                format!("steps[{index}].step_id"),
-                format!("expected {expected}, got {}", step.step_id),
-            ));
-        }
-    }
-    Ok(())
 }

@@ -1,11 +1,11 @@
 # ATIF Arrow
 
 A Rust workspace for converting ATIF agent trajectory documents into Arrow.
-The library provides an Arrow schema and core ATIF parsing; Arrow conversion is not implemented yet.
+The library provides a fixed Arrow schema, core ATIF parsing, and text trajectory conversion.
 
 | Crate | Responsibility |
 | --- | --- |
-| `atif-arrow` | Arrow schema and core parsing; normalization and batch reading follow. |
+| `atif-arrow` | Arrow schema, parsing, and text conversion; batch reading follows. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -48,6 +48,58 @@ The result preserves the original input through `raw_json()` and unmodeled field
 through `additional_fields`. Multimodal parts remain opaque JSON; detailed
 validation of those parts, tool calls, metrics, and subagents follows separately.
 
+## Conversion API
+
+```rust
+use atif_arrow::{parse_trajectory, to_record_batch};
+
+let parsed = parse_trajectory(document)?;
+let batch = to_record_batch(&parsed, Some("trajectory.json"), 1)?;
+assert_eq!(batch.num_rows(), 1);
+```
+
+`to_record_batch` converts one parsed document into one row with the fixed schema.
+The caller supplies the source URI (or `None`) and a one-based record index.
+Text messages and observations become content-part lists; tool arguments and
+other JSON payloads stay serialized JSON. Optional nulls and empty collections
+remain distinct, and `raw_json` preserves the original document.
+
+Conversion rejects incompatible field types, integer overflow, non-finite floats,
+and image/audio content. Embedded subagents are retained as opaque JSON; detailed
+ATIF relationship and version-specific validation follows separately. The JSON
+normalization uses the schema, and Arrow constructs the nested arrays.
+
+## Supported types and limitations
+
+Conversion follows the fixed ATIF schema; it does not infer arbitrary JSON schemas.
+
+| Input / field | Arrow representation |
+| --- | --- |
+| Text | `Utf8` |
+| Boolean | `Boolean` |
+| Numeric columns | `Int64`, `UInt64`, `Float64` |
+| Nested objects | `Struct` |
+| Arrays, including object arrays | `List`, including `List<Struct>` |
+| Timestamps | `Utf8`, preserving the original text without parsing or timezone conversion |
+| Dynamic JSON payloads and embedded subagents | JSON text in `Utf8` columns |
+
+Optional fields support null values; empty collections remain distinct from null.
+List elements are non-null. JSON payload columns preserve arbitrary-precision
+numbers as JSON text rather than converting them into numeric columns.
+
+The current converter does not produce these native Arrow types:
+
+- `Timestamp`, `Date32`/`Date64`, `Time32`/`Time64`, `Duration`, or `Interval`.
+- `Decimal`, `Binary`, or `Map`.
+- `LargeList`, `FixedSizeList`, or `Union`.
+- `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`, or `Float16`/`Float32`.
+
+These types would require explicit additions to the schema and conversion mapping.
+
+Image/audio message and observation conversion is still pending. Embedded
+subagents are retained as opaque JSON; detailed subagent, relationship, and
+version-specific validation is also pending.
+
 ## Development
 
 ```sh
@@ -57,5 +109,5 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The CLI is a scaffold and currently exits with a not-implemented message.
-Subsequent changes add text conversion, detailed multimodal and subagent
-validation, batch reading, then CLI commands and Arrow IPC export.
+Subsequent changes add multimodal conversion and detailed subagent validation,
+batch reading, then CLI commands and Arrow IPC export.
