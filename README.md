@@ -6,7 +6,8 @@ The workspace provides a fixed Arrow schema, core ATIF parsing, conversion, and 
 | Crate | Responsibility |
 | --- | --- |
 | `atif-arrow` | Arrow schema, parsing, validation, and conversion, including batch construction. |
-| `atif-io` | JSON/JSONL reading and source provenance; future storage backend adapters. |
+| `atif-io` | Async JSON/JSONL reading, source provenance, and OpenDAL storage access. |
+| `opendal-service-harborhub` | Read-only OpenDAL backend for Harbor Hub result objects. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -94,24 +95,28 @@ reading external data. A full batch must be flushed before appending another row
 
 ```rust
 use atif_io::{InputFormat, TrajectoryReader};
-use std::{fs::File, io::BufReader};
+use futures::io::Cursor;
 
-let input = BufReader::new(File::open("trajectories.jsonl")?);
-let reader = TrajectoryReader::new(
-    input, InputFormat::JsonLines, 256, Some("trajectories.jsonl".into()),
+let input = Cursor::new(document.as_bytes());
+let mut reader = TrajectoryReader::new(
+    input, InputFormat::Json, 256, None,
 )?;
-for batch in reader {
-    let batch = batch?;
+while let Some(batch) = reader.next_batch().await? {
     println!("{} trajectories", batch.num_rows());
 }
 ```
+
+`TrajectoryReader` accepts `futures::io::AsyncBufRead + Unpin`.
+`next_batch().await` returns `Result<Option<RecordBatch>, ReadError>`.
+`into_stream()` provides a `Stream<Item = Result<RecordBatch, ReadError>>` for
+`TryStreamExt` consumers. Pending calls can be cancelled and resumed without losing
+partial input or previously converted rows in the current batch.
 
 `InputFormat::Json` reads one complete document, including pretty-printed JSON.
 `JsonLines` reads one document per nonblank line and yields batches with at most
 `batch_size` rows. Empty JSONL input yields no batches; empty JSON input is an error.
 Batch size must be positive. Input streams and source URIs are supplied by the caller.
-`atif-io` owns the reader and its errors; `atif-arrow` owns conversion. Future
-OpenDAL adapters will live in `atif-io`.
+`atif-io` owns the reader, storage access, and reading errors; `atif-arrow` owns conversion.
 
 Record indices start at 1 and count documents, excluding blank lines. `raw_json`
 retains the record's original whitespace, including JSONL line endings. I/O, parsing,
@@ -122,6 +127,62 @@ Rows feed one `TrajectoryBatchBuilder` per reader, avoiding intermediate single-
 and concatenation of their column buffers. The reader reuses its input buffer and
 does not retain a separate raw document copy. Conversion still allocates parsed
 JSON, normalized JSON, and Arrow buffers; it is not zero-copy.
+
+## OpenDAL storage reading
+
+`TrajectoryReader::open(operator, path, format, batch_size, source_uri).await`
+reads through a caller-configured async `opendal::Operator`. Paths are relative
+to its root; `None` uses the path as provenance. Supply a full source URI to
+distinguish storage roots or buckets.
+
+`atif-io` enables OpenDAL's Tokio executor and reqwest HTTP transport, with default
+features disabled. Memory is built in; filesystem is enabled only for tests.
+Callers can enable `opendal/services-fs` and configure
+`services::Fs::default().root("/data")` for local files. S3 and GCS are not enabled.
+
+OpenDAL may defer access until reading, so a missing object can produce a record-1
+error from `next_batch`. Errors preserve the underlying OpenDAL cause.
+[OpenDAL's async reader](https://opendal.apache.org/docs/rust/opendal/struct.Reader.html)
+feeds `TrajectoryReader` directly without a second buffer or an intermediate
+object download. JSONL reading is incremental; each JSON document is read in full.
+I/O yields to the runtime; parsing and conversion remain synchronous CPU work.
+
+## Harbor Hub backend
+
+`opendal-service-harborhub` implements OpenDAL's `Builder` and `Service` interfaces,
+streams response bodies, and has no production dependency on ATIF conversion.
+
+```rust
+use atif_io::{InputFormat, TrajectoryReader};
+use opendal::Operator;
+use opendal_service_harborhub::HarborHub;
+
+opendal::install_default(); // Install the provided HTTP transport.
+let operator = Operator::new(HarborHub::default())?;
+let path = "trials/<trial-id>/trajectory.json";
+let mut reader = TrajectoryReader::open(
+    &operator, path, InputFormat::Json, 256,
+    Some(format!("harborhub://{path}")),
+).await?;
+```
+
+Consume batches as shown above. Paths are relative to Harbor's `results` bucket;
+`root("trials/<trial-id>")` makes `trajectory.json` relative to that trial.
+`endpoint` selects the Supabase project URL, and `publishable_key` selects its
+public gateway key. Defaults match
+[Harbor's public project configuration](https://github.com/harbor-framework/harbor/blob/main/src/harbor/auth/constants.py).
+
+The backend supports anonymous `read`, byte ranges, and `stat`. It sends the public
+key without a user bearer token; server permissions still apply to private results.
+Personal API-key exchange, token refresh, listing, writes, archive extraction, and
+URI registration are not implemented. Construct it with
+`Operator::new(HarborHub::default())`.
+
+Direct trajectory uploads are optional. A missing `trials/<trial-id>/trajectory.json`
+may be inside `trials/<trial-id>/trial.tar.gz`; the backend reads archive bytes but
+does not extract them. See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
+Tests use scripted HTTP responses to check encoding, ranges, metadata, errors, and
+Arrow conversion; they do not verify access to an existing live Hub trajectory.
 
 ## Supported types and limitations
 

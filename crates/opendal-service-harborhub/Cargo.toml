@@ -1,0 +1,18 @@
+[package]
+name = "opendal-service-harborhub"
+description = "Read-only OpenDAL backend for Harbor Hub result objects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+opendal-core = { version = "0.59.3", default-features = false }
+http = "1"
+serde.workspace = true
+serde_json.workspace = true
+url = "2"
+
+[dev-dependencies]
+futures = { workspace = true, features = ["executor"] }
+atif-io.workspace = true

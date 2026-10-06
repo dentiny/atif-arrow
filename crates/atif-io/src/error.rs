@@ -4,6 +4,10 @@ use std::fmt;
 #[derive(Debug)]
 pub enum ReadError {
     InvalidBatchSize,
+    Open {
+        source_uri: String,
+        source: opendal::Error,
+    },
     Record {
         source_uri: Option<String>,
         record_index: u64,
@@ -16,6 +20,9 @@ impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBatchSize => write!(f, "batch size must be greater than zero"),
+            Self::Open { source_uri, source } => {
+                write!(f, "{source_uri}: failed to open source: {source}")
+            }
             Self::Record {
                 source_uri,
                 record_index,
@@ -34,6 +41,7 @@ impl std::error::Error for ReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidBatchSize => None,
+            Self::Open { source, .. } => Some(source),
             Self::Record { source, .. } => Some(source.as_ref()),
         }
     }

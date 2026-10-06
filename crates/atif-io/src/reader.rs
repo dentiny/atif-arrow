@@ -1,7 +1,9 @@
-use std::io::BufRead;
-
 use arrow_array::RecordBatch;
 use atif_arrow::TrajectoryBatchBuilder;
+use futures::{
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt},
+    stream, Stream,
+};
 
 use crate::ReadError;
 
@@ -12,22 +14,23 @@ pub enum InputFormat {
     JsonLines,
 }
 
-/// Reads trajectories in order and yields batches with at most `batch_size` rows.
+/// Reads trajectories asynchronously in order, with at most `batch_size` rows per batch.
 /// Blank JSONL lines are skipped. Any error stops reading and discards the current batch.
 pub struct TrajectoryReader<R> {
     reader: R,
     format: InputFormat,
     batch_size: usize,
+    // Keeps converted rows across cancellation until the batch is flushed.
     builder: TrajectoryBatchBuilder,
     source_uri: Option<String>,
-    // Reused input buffer holding the current document, including its original whitespace.
-    buffer: String,
+    // Reused document buffer; partial bytes survive cancellation, including split UTF-8.
+    buffer: Vec<u8>,
     // One-based index of the next document; blank JSONL lines do not advance it.
     record_index: u64,
     done: bool,
 }
 
-impl<R: BufRead> TrajectoryReader<R> {
+impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
     /// Creates a reader with a positive batch size and optional source provenance.
     pub fn new(
         reader: R,
@@ -50,73 +53,77 @@ impl<R: BufRead> TrajectoryReader<R> {
             batch_size,
             builder,
             source_uri,
-            buffer: String::new(),
+            buffer: Vec::new(),
             record_index: 1,
             done: false,
         })
     }
 
-    /// Reads one document into the converter, retaining its original whitespace.
-    fn read_record(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    /// Reads one document into the converter, keeping partial reads in the input buffer.
+    async fn read_record(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         if self.done {
             return Ok(false);
         }
-        match self.format {
-            InputFormat::Json => {
-                self.done = true;
+        loop {
+            let eof = match self.format {
+                InputFormat::Json => {
+                    self.reader.read_to_end(&mut self.buffer).await?;
+                    true
+                }
+                InputFormat::JsonLines => {
+                    self.reader.read_until(b'\n', &mut self.buffer).await? == 0
+                }
+            };
+            self.done = eof;
+            let input = std::str::from_utf8(&self.buffer)?;
+            if matches!(self.format, InputFormat::JsonLines) && input.trim().is_empty() {
                 self.buffer.clear();
-                self.reader.read_to_string(&mut self.buffer)?;
-            }
-            InputFormat::JsonLines => loop {
-                self.buffer.clear();
-                if self.reader.read_line(&mut self.buffer)? == 0 {
-                    self.done = true;
+                if eof {
                     return Ok(false);
                 }
-                if !self.buffer.trim().is_empty() {
-                    break;
-                }
-            },
+                continue;
+            }
+            self.builder
+                .append_json(input, self.source_uri.as_deref(), self.record_index)?;
+            self.buffer.clear();
+            return Ok(true);
         }
-        self.builder
-            .append_json(&self.buffer, self.source_uri.as_deref(), self.record_index)?;
-        Ok(true)
     }
-}
 
-impl<R: BufRead> Iterator for TrajectoryReader<R> {
-    type Item = Result<RecordBatch, ReadError>;
-
-    /// Collects a batch, reporting the source and document index if a record fails.
-    fn next(&mut self) -> Option<Self::Item> {
+    /// Returns the next batch, or None at EOF; pending reads can be cancelled and resumed.
+    pub async fn next_batch(&mut self) -> Result<Option<RecordBatch>, ReadError> {
         if self.done {
-            return None;
+            return Ok(None);
         }
-        let first_index = self.record_index;
-        for _ in 0..self.batch_size {
-            match self.read_record() {
+        let first_index = self.record_index - self.builder.num_rows() as u64;
+        while self.builder.num_rows() < self.batch_size {
+            match self.read_record().await {
                 Ok(true) => self.record_index += 1,
                 Ok(false) => break,
                 Err(source) => {
                     self.done = true;
-                    return Some(Err(ReadError::Record {
+                    return Err(ReadError::Record {
                         source_uri: self.source_uri.clone(),
                         record_index: self.record_index,
                         source,
-                    }));
+                    });
                 }
             }
         }
-        self.builder
-            .flush()
-            .map_err(|source| {
-                self.done = true;
-                ReadError::Record {
-                    source_uri: self.source_uri.clone(),
-                    record_index: first_index,
-                    source: Box::new(source),
-                }
-            })
-            .transpose()
+        self.builder.flush().map_err(|source| {
+            self.done = true;
+            ReadError::Record {
+                source_uri: self.source_uri.clone(),
+                record_index: first_index,
+                source: Box::new(source),
+            }
+        })
+    }
+
+    /// Exposes batches as a stream that ends at EOF or after the first error.
+    pub fn into_stream(self) -> impl Stream<Item = Result<RecordBatch, ReadError>> {
+        stream::try_unfold(self, |mut reader| async move {
+            Ok(reader.next_batch().await?.map(|batch| (batch, reader)))
+        })
     }
 }

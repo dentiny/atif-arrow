@@ -30,6 +30,11 @@ impl TrajectoryBatchBuilder {
         })
     }
 
+    /// Returns the number of rows accumulated since the last flush.
+    pub fn num_rows(&self) -> usize {
+        self.decoder.len()
+    }
+
     /// Appends one complete document; flush a full batch before adding another row.
     pub fn append_json(
         &mut self,
