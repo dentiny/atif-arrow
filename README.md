@@ -69,6 +69,37 @@ and image/audio content. Embedded subagents are retained as opaque JSON; detaile
 ATIF relationship and version-specific validation follows separately. The JSON
 normalization uses the schema, and Arrow constructs the nested arrays.
 
+## Supported types and limitations
+
+Conversion follows the fixed ATIF schema; it does not infer arbitrary JSON schemas.
+
+| Input / field | Arrow representation |
+| --- | --- |
+| Text | `Utf8` |
+| Boolean | `Boolean` |
+| Numeric columns | `Int64`, `UInt64`, `Float64` |
+| Nested objects | `Struct` |
+| Arrays, including object arrays | `List`, including `List<Struct>` |
+| Timestamps | `Utf8`, preserving the original text without parsing or timezone conversion |
+| Dynamic JSON payloads and embedded subagents | JSON text in `Utf8` columns |
+
+Optional fields support null values; empty collections remain distinct from null.
+List elements are non-null. JSON payload columns preserve arbitrary-precision
+numbers as JSON text rather than converting them into numeric columns.
+
+The current converter does not produce these native Arrow types:
+
+- `Timestamp`, `Date32`/`Date64`, `Time32`/`Time64`, `Duration`, or `Interval`.
+- `Decimal`, `Binary`, or `Map`.
+- `LargeList`, `FixedSizeList`, or `Union`.
+- `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`, or `Float16`/`Float32`.
+
+These types would require explicit additions to the schema and conversion mapping.
+
+Image/audio message and observation conversion is still pending. Embedded
+subagents are retained as opaque JSON; detailed subagent, relationship, and
+version-specific validation is also pending.
+
 ## Development
 
 ```sh
