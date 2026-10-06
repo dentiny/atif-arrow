@@ -68,6 +68,14 @@ pub enum Message {
 
 /// Parses exactly one JSON document and validates its core ATIF fields.
 pub fn parse_trajectory(input: &str) -> Result<ParsedTrajectory, ParseError> {
+    Ok(ParsedTrajectory {
+        trajectory: parse_document(input)?,
+        raw_json: input.to_owned(),
+    })
+}
+
+/// Parses the core document without copying the raw input for streaming callers.
+pub(crate) fn parse_document(input: &str) -> Result<Trajectory, ParseError> {
     let mut deserializer = serde_json::Deserializer::from_str(input);
     let trajectory: Trajectory = serde_path_to_error::deserialize(&mut deserializer)
         .map_err(|error| ParseError::new(error.path().to_string(), error.inner().to_string()))?;
@@ -75,8 +83,5 @@ pub fn parse_trajectory(input: &str) -> Result<ParsedTrajectory, ParseError> {
         .end()
         .map_err(|error| ParseError::new("$", error.to_string()))?;
     validate_core(&trajectory)?;
-    Ok(ParsedTrajectory {
-        trajectory,
-        raw_json: input.to_owned(),
-    })
+    Ok(trajectory)
 }

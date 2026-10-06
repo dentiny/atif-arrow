@@ -1,11 +1,11 @@
 # ATIF Arrow
 
 A Rust workspace for converting ATIF agent trajectory documents into Arrow.
-The library provides a fixed Arrow schema, core ATIF parsing, and trajectory conversion.
+The library provides a fixed Arrow schema, core ATIF parsing, trajectory conversion, and batch reading.
 
 | Crate | Responsibility |
 | --- | --- |
-| `atif-arrow` | Arrow schema, parsing, and conversion; batch reading follows. |
+| `atif-arrow` | Arrow schema, parsing, conversion, and batch reading. |
 | `atif-arrow-cli` | Separate executable for future schema inspection and IPC export. |
 
 The library uses `arrow-schema` and Serde for JSON parsing. CLI argument parsing
@@ -85,6 +85,37 @@ Conversion also rejects incompatible field types, integer overflow, and non-fini
 numeric columns. JSON normalization uses the schema, and Arrow constructs the
 nested arrays.
 
+## Batch reading API
+
+```rust
+use atif_arrow::{InputFormat, TrajectoryReader};
+use std::{fs::File, io::BufReader};
+
+let input = BufReader::new(File::open("trajectories.jsonl")?);
+let reader = TrajectoryReader::new(
+    input, InputFormat::JsonLines, 256, Some("trajectories.jsonl".into()),
+)?;
+for batch in reader {
+    let batch = batch?;
+    println!("{} trajectories", batch.num_rows());
+}
+```
+
+`InputFormat::Json` reads one complete document, including pretty-printed JSON.
+`JsonLines` reads one document per nonblank line and yields batches with at most
+`batch_size` rows. Empty JSONL input yields no batches; empty JSON input is an error.
+Batch size must be positive. Input files and source URIs are supplied by the caller.
+
+Record indices start at 1 and count documents, excluding blank lines. `raw_json`
+retains the record's original whitespace, including JSONL line endings. I/O, parsing,
+and conversion errors include the source URI and record index and stop the reader.
+A failed batch is discarded; previously yielded batches remain available.
+Batch size limits rows rather than bytes; each trajectory is read in full.
+Rows feed one Arrow decoder per reader, avoiding intermediate single-row batches
+and concatenation of their column buffers. The reader reuses its input buffer and
+does not retain a separate raw document copy. Conversion still allocates parsed
+JSON, normalized JSON, and Arrow buffers; it is not zero-copy.
+
 ## Supported types and limitations
 
 Conversion follows the fixed ATIF schema; it does not infer arbitrary JSON schemas.
@@ -125,4 +156,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The CLI is a scaffold and currently exits with a not-implemented message.
-Subsequent changes add batch reading, then CLI commands and Arrow IPC export.
+The next change adds CLI commands and Arrow IPC export.
