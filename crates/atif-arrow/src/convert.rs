@@ -4,7 +4,7 @@ use arrow_schema::{DataType, Field, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    parse::validate_core, trajectory_schema, ConversionError, ParseError, ParsedTrajectory,
+    trajectory_schema, validation::validate_core, ConversionError, ParseError, ParsedTrajectory,
 };
 
 /// Converts one parsed document into one Arrow row, with caller-supplied source identity.

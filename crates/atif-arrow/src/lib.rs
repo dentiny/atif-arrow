@@ -2,6 +2,7 @@ mod convert;
 mod error;
 mod parse;
 mod schema;
+mod validation;
 
 pub use convert::to_record_batch;
 pub use error::{ConversionError, ParseError};
