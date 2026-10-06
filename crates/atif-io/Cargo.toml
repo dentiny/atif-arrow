@@ -4,6 +4,8 @@ description = "JSON and JSONL trajectory readers for ATIF to Arrow conversion"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+license-file.workspace = true
+readme.workspace = true
 repository.workspace = true
 
 [dependencies]

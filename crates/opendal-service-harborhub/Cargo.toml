@@ -4,6 +4,8 @@ description = "Read-only OpenDAL backend for Harbor Hub result objects"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+license-file.workspace = true
+readme.workspace = true
 repository.workspace = true
 
 [dependencies]
