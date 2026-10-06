@@ -16,3 +16,11 @@ url = "2"
 [dev-dependencies]
 futures = { workspace = true, features = ["executor"] }
 atif-io.workspace = true
+atif-arrow.workspace = true
+arrow-json.workspace = true
+opendal.workspace = true
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[[example]]
+name = "harborhub"
+path = "../../examples/harborhub.rs"
