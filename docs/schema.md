@@ -1,4 +1,4 @@
-# Arrow schema contract v1
+# Arrow schema contract
 
 One row represents one input ATIF trajectory document. `steps` retains input
 order as `List<Struct>`. Embedded subagents remain in a JSON field rather than
@@ -65,8 +65,5 @@ absent even when its child fields are required.
 - Copied-context steps and deterministic dispatches remain present; conversion
   does not choose which records a training pipeline should use.
 
-Schema metadata contains `atif-arrow.schema_version=1` and
-`atif-arrow.row_granularity=trajectory`. The mapping version is independent of
-ATIF input versions. Changes to field names, types, order, nullability, or
-normalization semantics require a mapping version change. Supported structural
-types are `Struct` and `List`; the contract contains no Arrow `Union` or `Null` type.
+Supported structural types are `Struct` and `List`; the contract contains no
+Arrow `Union` or `Null` type.

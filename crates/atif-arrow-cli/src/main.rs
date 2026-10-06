@@ -1,7 +1,4 @@
 fn main() -> std::process::ExitCode {
-    eprintln!(
-        "CLI commands are not implemented yet (Arrow schema v{}).",
-        atif_arrow::SCHEMA_VERSION
-    );
+    eprintln!("CLI commands are not implemented yet.");
     std::process::ExitCode::FAILURE
 }

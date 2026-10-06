@@ -3,37 +3,29 @@ use std::{collections::HashMap, sync::Arc};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use DataType::{Boolean, Float64, Int64, UInt64, Utf8};
 
-/// Version of the Arrow mapping, independent of the input's ATIF version.
-pub const SCHEMA_VERSION: &str = "1";
-
-/// One row per input trajectory document. See `docs/schema.md` for the mapping.
+/// One row per input trajectory document.
 ///
 /// List elements are non-null; optional lists preserve null versus empty.
 /// The schema is independent of which optional fields appear in the input.
 pub fn trajectory_schema() -> SchemaRef {
-    Arc::new(Schema::new_with_metadata(
-        vec![
-            Field::new("source_uri", Utf8, true),
-            Field::new("source_record_index", UInt64, false),
-            Field::new("atif_schema_version", Utf8, false),
-            Field::new("session_id", Utf8, true),
-            Field::new("trajectory_id", Utf8, true),
-            Field::new("agent", agent(), false),
-            list("steps", step(), false),
-            Field::new("notes", Utf8, true),
-            Field::new("final_metrics", final_metrics(), true),
-            Field::new("continued_trajectory_ref", Utf8, true),
-            json_field("extra_json", true),
-            json_field("subagent_trajectories_json", true),
-            json_field("raw_json", false),
-        ],
-        HashMap::from([
-            ("atif-arrow.schema_version".into(), SCHEMA_VERSION.into()),
-            ("atif-arrow.row_granularity".into(), "trajectory".into()),
-        ]),
-    ))
+    Arc::new(Schema::new(vec![
+        Field::new("source_uri", Utf8, true),
+        Field::new("source_record_index", UInt64, false),
+        Field::new("atif_schema_version", Utf8, false),
+        Field::new("session_id", Utf8, true),
+        Field::new("trajectory_id", Utf8, true),
+        Field::new("agent", agent(), false),
+        list("steps", step(), false),
+        Field::new("notes", Utf8, true),
+        Field::new("final_metrics", final_metrics(), true),
+        Field::new("continued_trajectory_ref", Utf8, true),
+        json_field("extra_json", true),
+        json_field("subagent_trajectories_json", true),
+        json_field("raw_json", false),
+    ]))
 }
 
+/// Schema for ATIF agent configuration; tool definitions remain serialized JSON.
 fn agent() -> DataType {
     record(vec![
         Field::new("name", Utf8, false),
@@ -44,6 +36,7 @@ fn agent() -> DataType {
     ])
 }
 
+/// Schema for an ATIF interaction, including ordered content, tool calls, and LLM data.
 fn step() -> DataType {
     record(vec![
         Field::new("step_id", UInt64, false),
@@ -62,6 +55,7 @@ fn step() -> DataType {
     ])
 }
 
+/// Tagged text, image, or audio content; media variants share a nullable source struct.
 fn content_part() -> DataType {
     record(vec![
         Field::new("type", Utf8, false),
@@ -78,6 +72,7 @@ fn content_part() -> DataType {
     ])
 }
 
+/// Schema for a tool invocation; arbitrary argument objects remain serialized JSON.
 fn tool_call() -> DataType {
     record(vec![
         Field::new("tool_call_id", Utf8, false),
@@ -87,6 +82,7 @@ fn tool_call() -> DataType {
     ])
 }
 
+/// Tool or environment results, with references to calls and delegated subagent trajectories.
 fn observation() -> DataType {
     record(vec![list(
         "results",
@@ -109,6 +105,7 @@ fn observation() -> DataType {
     )])
 }
 
+/// Per-step LLM usage and cost, including optional token IDs and token-level logprobs.
 fn metrics() -> DataType {
     record(vec![
         Field::new("prompt_tokens", Int64, true),
@@ -122,6 +119,7 @@ fn metrics() -> DataType {
     ])
 }
 
+/// Trajectory-level totals supplied by the producer; all fields are optional.
 fn final_metrics() -> DataType {
     record(vec![
         Field::new("total_prompt_tokens", Int64, true),
@@ -133,10 +131,12 @@ fn final_metrics() -> DataType {
     ])
 }
 
+/// Groups named fields into an Arrow struct.
 fn record(fields: Vec<Field>) -> DataType {
     DataType::Struct(fields.into())
 }
 
+/// Creates a list with non-null elements; nullable controls the list itself.
 fn list(name: &str, item: DataType, nullable: bool) -> Field {
     Field::new(
         name,
@@ -145,6 +145,7 @@ fn list(name: &str, item: DataType, nullable: bool) -> Field {
     )
 }
 
+/// Marks a UTF-8 field as serialized JSON to keep arbitrary payloads in a fixed type.
 fn json_field(name: &str, nullable: bool) -> Field {
     Field::new(name, Utf8, nullable).with_metadata(HashMap::from([(
         "atif-arrow.encoding".into(),
