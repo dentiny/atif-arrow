@@ -15,7 +15,6 @@ struct HubTransport {
     requests: Arc<Mutex<usize>>,
     object_error: Option<(StatusCode, &'static str)>,
     ignore_range: bool,
-    head_bad_request: bool,
     missing_content_range: bool,
     content_range: Option<&'static str>,
 }
@@ -33,10 +32,7 @@ impl HttpTransport for HubTransport {
             );
             assert!(req.uri().query().is_none());
             *requests += 1;
-            if req.method() == Method::HEAD && self.head_bad_request {
-                response = response.status(StatusCode::BAD_REQUEST);
-                String::new()
-            } else if let Some((status, body)) = self.object_error {
+            if let Some((status, body)) = self.object_error {
                 response = response.status(status);
                 body.into()
             } else if req.method() == Method::HEAD {
@@ -150,12 +146,6 @@ fn maps_storage_errors_and_rejects_ignored_ranges() {
             (StatusCode::NOT_FOUND, "", ErrorKind::NotFound, false),
             (
                 StatusCode::BAD_REQUEST,
-                r#"{"statusCode":"404"}"#,
-                ErrorKind::NotFound,
-                false,
-            ),
-            (
-                StatusCode::BAD_REQUEST,
                 r#"{"code":"InvalidJWT"}"#,
                 ErrorKind::PermissionDenied,
                 false,
@@ -234,55 +224,6 @@ fn validates_configuration() {
             .kind(),
         ErrorKind::ConfigInvalid
     );
-}
-
-#[test]
-fn stat_resolves_legacy_head_errors_without_assuming_not_found() {
-    futures::executor::block_on(async {
-        let transport = HubTransport {
-            head_bad_request: true,
-            object_error: Some((
-                StatusCode::BAD_REQUEST,
-                r#"{"code":"NoSuchKey","statusCode":"404"}"#,
-            )),
-            ..Default::default()
-        };
-        let op = operator(&transport);
-        assert_eq!(
-            op.stat("trajectory.json").await.unwrap_err().kind(),
-            ErrorKind::NotFound
-        );
-        assert!(!op.exists("trajectory.json").await.unwrap());
-        assert_eq!(*transport.requests.lock().unwrap(), 4);
-
-        let denied = HubTransport {
-            head_bad_request: true,
-            object_error: Some((StatusCode::BAD_REQUEST, r#"{"code":"AccessDenied"}"#)),
-            ..Default::default()
-        };
-        assert_eq!(
-            operator(&denied)
-                .stat("trajectory.json")
-                .await
-                .unwrap_err()
-                .kind(),
-            ErrorKind::PermissionDenied
-        );
-
-        // A 400 from HEAD does not by itself establish whether an object exists.
-        let readable = HubTransport {
-            head_bad_request: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            operator(&readable)
-                .stat("trajectory.json")
-                .await
-                .unwrap()
-                .content_length(),
-            DOCUMENT.len() as u64
-        );
-    });
 }
 
 #[test]

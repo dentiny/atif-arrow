@@ -9,6 +9,11 @@ use crate::core::HarborHubCore;
 use crate::error::parse_error;
 use crate::reader::HarborHubReader;
 
+/// Default Supabase project URL used by the public Harbor Hub.
+const DEFAULT_SUPABASE_URL: &str = "https://ofhuhcpkvzjlejydnvyd.supabase.co";
+/// Public gateway key for the default Harbor Hub Supabase project.
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY: &str = "sb_publishable_Z-vuQbpvpG-PStjbh4yE0Q_e-d3MTIH";
+
 /// Read-only OpenDAL builder for Harbor Hub's `results` bucket.
 #[derive(Debug, Default)]
 pub struct HarborHub {
@@ -33,17 +38,14 @@ impl HarborHub {
         self.config.publishable_key = Some(key.into());
         self
     }
-}
 
-impl Builder for HarborHub {
-    type Config = HarborHubConfig;
-
-    fn build(self) -> Result<impl Service> {
+    /// Parses and validates the configured endpoint, using the public Hub default.
+    fn validate_endpoint(&self) -> Result<url::Url> {
         let endpoint = self
             .config
             .endpoint
             .as_deref()
-            .unwrap_or("https://ofhuhcpkvzjlejydnvyd.supabase.co");
+            .unwrap_or(DEFAULT_SUPABASE_URL);
         let url = url::Url::parse(endpoint).map_err(|source| {
             Error::new(ErrorKind::ConfigInvalid, "invalid Supabase endpoint").set_source(source)
         })?;
@@ -59,11 +61,20 @@ impl Builder for HarborHub {
                 "endpoint must use HTTP or HTTPS without credentials, query, or fragment",
             ));
         }
+        Ok(url)
+    }
+}
+
+impl Builder for HarborHub {
+    type Config = HarborHubConfig;
+
+    fn build(self) -> Result<impl Service> {
+        let url = self.validate_endpoint()?;
         let publishable_key = self
             .config
             .publishable_key
             .as_deref()
-            .unwrap_or("sb_publishable_Z-vuQbpvpG-PStjbh4yE0Q_e-d3MTIH");
+            .unwrap_or(DEFAULT_SUPABASE_PUBLISHABLE_KEY);
         if publishable_key.is_empty() {
             return Err(Error::new(
                 ErrorKind::ConfigInvalid,
@@ -127,21 +138,10 @@ impl Service for HarborHubBackend {
         let req = self.core.object_request(http::Method::HEAD, path)?;
         let resp = ctx.http_transport().send(req).await?;
         if resp.status() == http::StatusCode::OK {
-            return parse_into_metadata(path, resp.headers()).map(RpStat::new);
+            parse_into_metadata(path, resp.headers()).map(RpStat::new)
+        } else {
+            Err(parse_error(resp))
         }
-        if resp.status() != http::StatusCode::BAD_REQUEST {
-            return Err(parse_error(resp));
-        }
-        // Legacy Supabase errors use HTTP 400; HEAD omits the identifying JSON body.
-        let req = self.core.object_request(http::Method::GET, path)?;
-        let resp = ctx.http_transport().fetch(req).await?;
-        if resp.status() == http::StatusCode::OK {
-            // Inspect metadata and drop the stream without buffering the object.
-            return parse_into_metadata(path, resp.headers()).map(RpStat::new);
-        }
-        let (parts, mut body) = resp.into_parts();
-        let buffer = body.to_buffer().await?;
-        Err(parse_error(http::Response::from_parts(parts, buffer)))
     }
 
     async fn create_dir(

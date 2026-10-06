@@ -1,7 +1,7 @@
 use http::{Response, StatusCode};
 use opendal_core::{Buffer, Error, ErrorKind};
 
-/// Map both HTTP statuses and Supabase's legacy JSON error codes into OpenDAL errors.
+/// Map HTTP statuses and Supabase error codes into OpenDAL errors.
 pub(crate) fn parse_error(resp: Response<Buffer>) -> Error {
     let status = resp.status();
     let body = resp.body().to_bytes();
@@ -11,9 +11,6 @@ pub(crate) fn parse_error(resp: Response<Buffer>) -> Error {
         Some("NoSuchKey" | "NoSuchBucket") => ErrorKind::NotFound,
         Some("AccessDenied" | "InvalidJWT" | "ExpiredToken") => ErrorKind::PermissionDenied,
         Some("InvalidRange") => ErrorKind::RangeNotSatisfied,
-        _ if payload.get("statusCode").and_then(|v| v.as_str()) == Some("404") => {
-            ErrorKind::NotFound
-        }
         _ => match status {
             StatusCode::NOT_FOUND => ErrorKind::NotFound,
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ErrorKind::PermissionDenied,
