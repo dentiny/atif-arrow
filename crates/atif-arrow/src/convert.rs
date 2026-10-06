@@ -17,10 +17,13 @@ pub fn to_record_batch(
 ) -> Result<RecordBatch, ConversionError> {
     validate_core(&parsed.trajectory).map_err(ConversionError::Field)?;
     if source_record_index == 0 {
-        return Err(invalid("source_record_index", "expected a one-based index"));
+        return Err(ConversionError::Field(ParseError::new(
+            "source_record_index",
+            "expected a one-based index",
+        )));
     }
     let mut document = serde_json::to_value(&parsed.trajectory)
-        .map_err(|error| invalid("$", error.to_string()))?;
+        .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))?;
     document["source_uri"] = json!(source_uri);
     document["source_record_index"] = json!(source_record_index);
     document["raw_json"] = json!(parsed.raw_json());
@@ -33,7 +36,9 @@ pub fn to_record_batch(
     let mut reader = ReaderBuilder::new(schema).build(encoded.as_bytes())?;
     reader
         .next()
-        .ok_or_else(|| invalid("$", "Arrow decoder returned no row"))?
+        .ok_or_else(|| {
+            ConversionError::Field(ParseError::new("$", "Arrow decoder returned no row"))
+        })?
         .map_err(ConversionError::Arrow)
 }
 
@@ -41,7 +46,7 @@ pub fn to_record_batch(
 fn normalize_object(fields: &Fields, value: &Value, path: &str) -> Result<Value, ConversionError> {
     let object = value
         .as_object()
-        .ok_or_else(|| invalid(path, "expected an object"))?;
+        .ok_or_else(|| ConversionError::Field(ParseError::new(path, "expected an object")))?;
     let mut output = Map::new();
     for field in fields {
         let name = match field.name().as_str() {
@@ -69,7 +74,10 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         return if field.is_nullable() {
             Ok(Value::Null)
         } else {
-            Err(invalid(path, "required field cannot be missing or null"))
+            Err(ConversionError::Field(ParseError::new(
+                path,
+                "required field cannot be missing or null",
+            )))
         };
     }
     if field.name() != "raw_json"
@@ -89,7 +97,10 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         return if valid {
             Ok(Value::String(value.to_string()))
         } else {
-            Err(invalid(path, "invalid JSON payload type"))
+            Err(ConversionError::Field(ParseError::new(
+                path,
+                "invalid JSON payload type",
+            )))
         };
     }
     match field.data_type() {
@@ -99,30 +110,30 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
             if content && value.is_string() {
                 return Ok(json!([{"type": "text", "text": value}]));
             }
-            let items = value
-                .as_array()
-                .ok_or_else(|| invalid(path, "expected an array"))?;
+            let items = value.as_array().ok_or_else(|| {
+                ConversionError::Field(ParseError::new(path, "expected an array"))
+            })?;
             let mut output = Vec::with_capacity(items.len());
             for (index, value) in items.iter().enumerate() {
                 let item_path = format!("{path}[{index}]");
                 if content {
                     if value.get("type").and_then(Value::as_str) != Some("text") {
-                        return Err(invalid(
+                        return Err(ConversionError::Field(ParseError::new(
                             format!("{item_path}.type"),
                             "only text content is supported",
-                        ));
+                        )));
                     }
                     if !value.get("text").is_some_and(Value::is_string) {
-                        return Err(invalid(
+                        return Err(ConversionError::Field(ParseError::new(
                             format!("{item_path}.text"),
                             "text content requires a string",
-                        ));
+                        )));
                     }
                     if value.get("source").is_some_and(|source| !source.is_null()) {
-                        return Err(invalid(
+                        return Err(ConversionError::Field(ParseError::new(
                             format!("{item_path}.source"),
                             "text content cannot contain a media source",
-                        ));
+                        )));
                     }
                 }
                 output.push(normalize_field(item, value, &item_path)?);
@@ -141,16 +152,11 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
             if valid {
                 Ok(value.clone())
             } else {
-                Err(invalid(
+                Err(ConversionError::Field(ParseError::new(
                     path,
                     format!("value cannot be represented as {data_type}"),
-                ))
+                )))
             }
         }
     }
-}
-
-/// Associates conversion failures with their input field location.
-fn invalid(path: impl Into<String>, message: impl Into<String>) -> ConversionError {
-    ConversionError::Field(ParseError::new(path, message))
 }
