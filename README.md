@@ -56,8 +56,7 @@ async fn read_jsonl(input: impl AsyncBufRead + Unpin) -> Result<(), ReadError> {
 - `InputFormat::Json` reads one complete document, including pretty-printed JSON.
 - `InputFormat::JsonLines` reads one document per nonblank line. Empty input yields
   no batches; empty `Json` input is an error.
-- Batch size must be positive and limits rows, not bytes. Each trajectory is read
-  in full; JSONL records are read incrementally.
+- Batch size must be positive and limits rows, not bytes.
 - `into_stream()` exposes batches as a `Stream<Item = Result<RecordBatch, ReadError>>`.
   Pending reads can be cancelled and resumed without losing partial input or rows.
 
@@ -65,6 +64,14 @@ Record indices start at 1 and exclude blank lines. `raw_json` preserves whitespa
 including JSONL line endings. Errors include the source URI and record index,
 stop the reader, and discard the current batch; previously yielded batches remain
 available. Reading is async; parsing and conversion run synchronously.
+
+**Memory use is not bounded.** `Json` input is read into memory in full before
+parsing. `JsonLines` reads one record at a time, but there is no line-length limit,
+so a single long line is also buffered in full. A batch holds up to `batch_size`
+converted rows, each including its `raw_json`. Peak memory therefore grows with the
+largest trajectory times `batch_size`. This is intended for agent trajectories,
+which are usually small. For untrusted or very large input, check object sizes
+first (for example with OpenDAL `stat`) or lower `batch_size`.
 
 ### OpenDAL
 
