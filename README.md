@@ -1,45 +1,22 @@
 # ATIF Arrow
 
-**Turn agent trajectory JSON into structured Arrow data for analysis and training pipelines.**
+**Turn agent trajectories into Arrow data.**
 
-Already collecting agent runs with Harbor or another ATIF producer? ATIF Arrow
-converts those logs into Rust `RecordBatch` values with a consistent schema for
-messages, tool calls, observations, and token/cost metrics. You can work with the
-same columns across runs while keeping the original JSON for inspection.
-
+A Rust library for converting
 [ATIF](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md)
-(Agent Trajectory Interchange Format) records an agent's interaction history as
-JSON. [Apache Arrow](https://arrow.apache.org/) represents that data as typed,
-columnar batches that downstream data tools can consume.
+(Agent Trajectory Interchange Format) logs into
+[Apache Arrow](https://arrow.apache.org/) `RecordBatch` values. Each trajectory
+becomes one row containing its agent, ordered steps, tool calls, and observations.
 
-```text
-ATIF JSON / JSONL  →  validate and convert  →  Arrow RecordBatch
-local files / S3 / GCS / Harbor Hub         one row per trajectory
-```
+- **Compare runs:** a fixed schema for supplied token/cost metrics and tool usage.
+- **Use your storage:** the same JSON/JSONL reader works with any readable OpenDAL
+  backend, including local files, S3, GCS, and Harbor Hub.
+- **Keep the evidence:** validate during ingestion and retain verbatim JSON,
+  unknown fields, and source provenance.
 
-## Why use it?
+## Convert your first file
 
-- **Analyze agent runs with a consistent schema.** Agent identity, ordered steps,
-  tool calls, and supplied token/cost metrics have defined Arrow fields, so your
-  pipeline does not need to infer a new schema for each input.
-- **Keep the context behind the numbers.** Each row retains the trajectory's
-  nested steps, source location, record index, and verbatim `raw_json`, including
-  unknown fields. Text, image, and audio content share a content-part structure.
-- **Catch malformed data during ingestion.** Version-aware checks cover core
-  fields, mapped types, content, and references, with errors that identify field
-  paths such as `steps[0].timestamp`.
-- **Read from the storage you already use.** OpenDAL operators let the same
-  JSON/JSONL reader work with local files, S3, GCS, Harbor Hub, and other readable
-  backends. Configure storage once, then pass an object path.
-
-Use it when you are building a **Rust ingestion pipeline** to compare agent runs,
-inspect tool usage, or prepare trajectories for downstream analysis or training.
-The library supplies structured data; your pipeline chooses queries, training
-samples, and export formats.
-
-## Quick start from crates.io
-
-You need a Rust toolchain with Cargo. Create a project and add the published crate:
+With Rust and Cargo installed:
 
 ```sh
 cargo new atif-demo --edition 2021
@@ -64,75 +41,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Pass the path to an ATIF JSON file:
+Pass an ATIF JSON filepath:
 
 ```sh
 cargo run -- /path/to/trajectory.json
 ```
 
-For a first run, save [this sample trajectory](examples/trajectory.json) as
-`trajectory.json` and run `cargo run -- trajectory.json`. Expected output:
+For a first run, save [the sample](examples/trajectory.json) as `trajectory.json`
+and run `cargo run -- trajectory.json`. Output: `1 row, 13 columns`.
+The path is retained in `source_uri`; the input text is retained in `raw_json`.
 
-```text
-1 row, 13 columns
-```
+Reading JSONL or cloud objects? The [storage guide](docs/usage.md) uses one reader
+with local, S3, and GCS operators. To inspect actual token/cost values, see
+[the conversion example](examples/README.md#convert-a-local-json-file).
 
-The file path is recorded in the row's `source_uri`. Cargo may download
-dependencies on the first build.
+## Choose a crate
 
-For an existing project, `cargo add atif-arrow@0.1.0` adds the equivalent
-`Cargo.toml` dependency:
-
-```toml
-[dependencies]
-atif-arrow = "0.1.0"
-```
-
-The package name is `atif-arrow`; Rust imports use `atif_arrow`.
-See [crates.io](https://crates.io/crates/atif-arrow) for the published package and
-[docs.rs](https://docs.rs/atif-arrow/0.1.0/atif_arrow/) for its API documentation.
-
-This produces one row with 13 top-level columns. `agent` is a struct, `steps` is
-an ordered list of structs, and `final_metrics` holds totals supplied by the
-producer. Missing optional values become null; metrics are not recomputed.
-The full mapping is in the [schema contract](docs/schema.md).
-
-Choose the entry point that matches your input:
-
-| Your input | Entry point |
+| Crate | Use it for |
 | --- | --- |
-| One JSON document already in memory | `atif-arrow`: `parse_trajectory` + `to_record_batch` |
-| Multiple documents already in memory | `atif-arrow`: `TrajectoryBatchBuilder` |
-| An async JSON/JSONL source or OpenDAL object | `atif-io`: `TrajectoryReader` |
-| A known public Harbor Hub object path | `opendal-service-harborhub` + `atif-io` |
+| [atif-arrow](https://crates.io/crates/atif-arrow) | Convert documents already supplied by your code. |
+| `atif-io` | Read JSON/JSONL as Arrow batches through OpenDAL or an async input. |
+| `opendal-service-harborhub` | Access known public Harbor Hub result objects through OpenDAL. |
 
-`atif-arrow` is available on crates.io. The I/O and Harbor backend crates currently
-require the repository source. See the [usage guide](docs/usage.md) for dependencies
-and the same JSON/JSONL reader configured for different storage backends.
+`atif-arrow 0.1.0` is on crates.io. The two I/O crates currently require a local
+checkout; their dependencies are shown in the [storage guide](docs/usage.md) and
+[Harbor example](examples/README.md#harbor-hub). Cargo names use hyphens;
+Rust imports use underscores, such as `atif_arrow`.
 
-For a file-based example that reads token/cost metrics from Arrow columns, or a
-real public Terminal-Bench trajectory, see [the examples guide](examples/README.md).
+## Scope
 
-## Current scope
-
-- Supports **ATIF v1.0–v1.8** with a fixed trajectory schema. Each input document
-  becomes one row; embedded subagents are validated and retained as JSON.
-- Produces in-memory Arrow batches. CLI commands, Python bindings, and built-in
+- **ATIF v1.0–v1.8.** Embedded subagents are validated and retained as JSON.
+- **In-memory Arrow batches.** CLI commands, Python bindings, and built-in
   Parquet/IPC/Lance export are not implemented.
-- Reads JSONL incrementally, but batch size limits **rows, not bytes**. Full JSON
-  documents and individual JSONL records are buffered, and each row retains its
-  raw JSON. Size inputs and batches for your available memory.
-- Harbor Hub access currently requires a known, publicly readable object path.
-  Discovery, listing, authenticated access, and archive extraction are not
-  implemented. Media and external trajectory references are retained without
-  fetching their targets.
+- **Batch size limits rows, not bytes.** Individual JSON/JSONL records are buffered
+  in full, and each row includes its raw JSON.
+- **Harbor Hub requires a public object path.** Discovery, listing, authenticated
+  access, and archive extraction are not implemented. External references are
+  retained without fetching their targets.
 
-## Learn more
+[API docs](https://docs.rs/atif-arrow/0.1.0/atif_arrow/) ·
+[Schema](docs/schema.md) · [Reference](docs/reference.md) · [Examples](examples/README.md)
 
-- [Usage guide](docs/usage.md): one JSON/JSONL reader with local, S3, and GCS operators.
-- [Reference](docs/reference.md): reader behavior, validation, and limits.
-- [Schema contract](docs/schema.md): columns, nested types, and preservation behavior.
-- [Harbor Hub example](examples/README.md): a real trajectory and its provenance.
-
-For development from a repository checkout, run `cargo test --locked --workspace`.
-Licensed under [MIT](LICENSE).
+For development: `cargo test --locked --workspace`. Licensed under [MIT](LICENSE).

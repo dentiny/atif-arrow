@@ -1,6 +1,10 @@
 use std::error::Error;
 
-use arrow_array::{Array, Float64Array, Int64Array, ListArray, StringArray, StructArray};
+use arrow_array::{
+    cast::AsArray,
+    types::{Float64Type, Int64Type},
+    Array,
+};
 use atif_arrow::{parse_trajectory, to_record_batch, trajectory_schema};
 
 // cargo run -- /path/to/trajectory.json
@@ -14,31 +18,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert_eq!(batch.schema(), trajectory_schema());
 
     // Read typed Arrow columns. Each row contains one entire trajectory.
-    let agent = batch["agent"]
-        .as_any()
-        .downcast_ref::<StructArray>()
-        .unwrap();
-    let name = agent["name"]
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-    let steps = batch["steps"].as_any().downcast_ref::<ListArray>().unwrap();
-    let metrics = batch["final_metrics"]
-        .as_any()
-        .downcast_ref::<StructArray>()
-        .unwrap();
-    let tokens = metrics["total_prompt_tokens"]
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .unwrap();
-    let cost = metrics["total_cost_usd"]
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
-    let raw = batch["raw_json"]
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
+    let agent = batch["agent"].as_struct();
+    let name = agent["name"].as_string::<i32>();
+    let steps = batch["steps"].as_list::<i32>();
+    let metrics = batch["final_metrics"].as_struct();
+    let tokens = metrics["total_prompt_tokens"].as_primitive::<Int64Type>();
+    let cost = metrics["total_cost_usd"].as_primitive::<Float64Type>();
+    let raw = batch["raw_json"].as_string::<i32>();
     assert_eq!(raw.value(0), json);
 
     println!("Source: {path}");
