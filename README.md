@@ -14,7 +14,7 @@ columnar batches that downstream data tools can consume.
 
 ```text
 ATIF JSON / JSONL  →  validate and convert  →  Arrow RecordBatch
-local input or Harbor Hub                   one row per trajectory
+local files / S3 / GCS / Harbor Hub         one row per trajectory
 ```
 
 ## Why use it?
@@ -28,9 +28,9 @@ local input or Harbor Hub                   one row per trajectory
 - **Catch malformed data during ingestion.** Version-aware checks cover core
   fields, mapped types, content, and references, with errors that identify field
   paths such as `steps[0].timestamp`.
-- **Start with the data you already have.** Convert an in-memory document, read
-  JSON/JSONL in batches, or read known public Harbor Hub trajectory objects
-  through OpenDAL.
+- **Read from the storage you already use.** OpenDAL operators let the same
+  JSON/JSONL reader work with local files, S3, GCS, Harbor Hub, and other readable
+  backends. Configure storage once, then pass an object path.
 
 Use it when you are building a **Rust ingestion pipeline** to compare agent runs,
 inspect tool usage, or prepare trajectories for downstream analysis or training.
@@ -106,11 +106,9 @@ Choose the entry point that matches your input:
 | An async JSON/JSONL source or OpenDAL object | `atif-io`: `TrajectoryReader` |
 | A known public Harbor Hub object path | `opendal-service-harborhub` + `atif-io` |
 
-`atif-arrow` is available on crates.io. The `atif-io` and
-`opendal-service-harborhub` crates currently require the repository source; the
-[usage guide](docs/usage.md) gives their local path dependencies alongside each
-example. It also covers batching, JSONL, storage configuration, provenance, and
-error handling.
+`atif-arrow` is available on crates.io. The I/O and Harbor backend crates currently
+require the repository source. See the [usage guide](docs/usage.md) for dependencies
+and the same JSON/JSONL reader configured for different storage backends.
 
 For a file-based example that reads token/cost metrics from Arrow columns, or a
 real public Terminal-Bench trajectory, see [the examples guide](examples/README.md).
@@ -131,7 +129,8 @@ real public Terminal-Bench trajectory, see [the examples guide](examples/README.
 
 ## Learn more
 
-- [Usage guide](docs/usage.md): conversion APIs, readers, storage, and validation rules.
+- [Usage guide](docs/usage.md): one JSON/JSONL reader with local, S3, and GCS operators.
+- [Reference](docs/reference.md): reader behavior, validation, and limits.
 - [Schema contract](docs/schema.md): columns, nested types, and preservation behavior.
 - [Harbor Hub example](examples/README.md): a real trajectory and its provenance.
 
