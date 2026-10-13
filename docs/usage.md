@@ -2,24 +2,36 @@
 
 For a first run and an overview, see the [project README](../README.md).
 
-## Convert a trajectory
+## Read an ATIF JSON file
+
+Add the published conversion crate to your application's `Cargo.toml`:
+
+```toml
+[dependencies]
+atif-arrow = "0.1.0"
+```
+
+Cargo package names use hyphens; Rust imports use underscores, as in
+`use atif_arrow::...`.
 
 ```rust
-use atif_arrow::{parse_trajectory, to_record_batch, trajectory_schema};
+use atif_arrow::{parse_trajectory, to_record_batch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let document = r#"{
-      "schema_version": "ATIF-v1.8",
-      "agent": {"name": "example", "version": "1"},
-      "steps": [{"step_id": 1, "source": "user", "message": "hello"}]
-    }"#;
-    let parsed = parse_trajectory(document)?;
-    let batch = to_record_batch(&parsed, Some("trajectory.json"), 1)?;
-    assert_eq!(batch.schema(), trajectory_schema());
-    assert_eq!(batch.num_rows(), 1);
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: atif-demo <trajectory.json>")?;
+    let json = std::fs::read_to_string(&path)?;
+    let parsed = parse_trajectory(&json)?;
+    let batch = to_record_batch(&parsed, Some(&path), 1)?;
+    println!("{} row, {} columns", batch.num_rows(), batch.num_columns());
     Ok(())
 }
 ```
+
+Run `cargo run -- /path/to/trajectory.json`. The application reads the file and
+passes its path as provenance. This entry point expects one complete JSON
+document, including pretty-printed JSON. For JSONL, use the next example.
 
 `parse_trajectory` accepts exactly one JSON document and preserves its text through
 `raw_json()`. Unmodeled fields remain in `additional_fields` and `raw_json`.
@@ -30,7 +42,70 @@ For documents already supplied by the caller, `TrajectoryBatchBuilder` provides
 `append_json` and `flush` without storage I/O. Flush a full batch before appending
 another document.
 
-## Read JSON and JSONL
+## Read an ATIF JSONL file
+
+Use the same published dependency, `atif-arrow = "0.1.0"`. Replace `src/main.rs`
+with the following and run `cargo run -- /path/to/trajectories.jsonl`:
+
+```rust
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+use atif_arrow::TrajectoryBatchBuilder;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: atif-demo <trajectories.jsonl>")?;
+    let mut input = BufReader::new(File::open(&path)?);
+    let mut builder = TrajectoryBatchBuilder::new(256)?;
+    let mut line = String::new();
+    let mut record_index = 0;
+
+    while input.read_line(&mut line)? != 0 {
+        if !line.trim().is_empty() {
+            record_index += 1;
+            builder.append_json(&line, Some(&path), record_index)?;
+            if builder.num_rows() == 256 {
+                if let Some(batch) = builder.flush()? {
+                    println!("{} trajectories", batch.num_rows());
+                }
+            }
+        }
+        line.clear();
+    }
+    if let Some(batch) = builder.flush()? {
+        println!("{} trajectories", batch.num_rows());
+    }
+    Ok(())
+}
+```
+
+Each nonblank line must be a complete ATIF document. This example preserves line
+endings in `raw_json`, records the input path and one-based nonblank record index,
+and flushes every 256 trajectories plus a final partial batch. Empty input yields
+no batches. The batch size limits rows, not bytes; an individual line is buffered
+in full. A conversion error exits the example before its current batch is flushed.
+
+## Async readers and storage
+
+The I/O crates (`atif-io` and `opendal-service-harborhub`) are currently available
+from the repository source. For these examples, clone the repository alongside
+your application directory. Run this from your application's root if the sibling
+checkout does not already exist:
+
+```sh
+git clone https://github.com/dentiny/atif-arrow.git ../atif-arrow
+```
+
+Add these dependencies to the application's `Cargo.toml`. The relative path
+assumes the application and `atif-arrow` checkout are sibling directories:
+
+```toml
+[dependencies]
+atif-io = { path = "../atif-arrow/crates/atif-io" }
+futures = "0.3"
+```
 
 ```rust
 use atif_io::{InputFormat, ReadError, TrajectoryReader};
@@ -67,6 +142,16 @@ first (for example with OpenDAL `stat`) or lower `batch_size`.
 
 ### OpenDAL
 
+For local files, use these dependencies with the sibling checkout described
+above. `services-fs` enables the filesystem backend:
+
+```toml
+[dependencies]
+atif-io = { path = "../atif-arrow/crates/atif-io" }
+opendal = { version = "0.59.3", default-features = false, features = ["services-fs", "executors-tokio", "http-transport-reqwest"] }
+tokio = { version = "1", features = ["macros", "rt"] }
+```
+
 `TrajectoryReader::open(&operator, path, format, batch_size, source_uri).await`
 reads an object through a caller-configured `opendal::Operator`. Paths are relative
 to the operator's root; `None` uses the path as provenance. Supply a full source
@@ -84,6 +169,19 @@ OpenDAL access may be deferred until `next_batch`, and errors preserve its cause
 
 ### Harbor Hub
 
+For an application using the sibling checkout, add:
+
+```toml
+[dependencies]
+atif-io = { path = "../atif-arrow/crates/atif-io" }
+opendal-service-harborhub = { path = "../atif-arrow/crates/opendal-service-harborhub" }
+opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio", "http-transport-reqwest"] }
+tokio = { version = "1", features = ["macros", "rt"] }
+```
+
+Rust imports use `atif_io` and `opendal_service_harborhub`. Call the following
+function from a Tokio async runtime:
+
 ```rust
 use atif_io::{InputFormat, TrajectoryReader};
 use opendal::Operator;
@@ -94,9 +192,13 @@ async fn read_trial(trial_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let operator = Operator::new(HarborHub::default())?;
     let path = format!("trials/{trial_id}/trajectory.json");
     let mut reader = TrajectoryReader::open(
-        &operator, &path, InputFormat::Json, 256,
+        &operator,
+        &path,
+        InputFormat::Json,
+        256,
         Some(format!("harborhub://{path}")),
-    ).await?;
+    )
+    .await?;
     while let Some(batch) = reader.next_batch().await? {
         println!("{} trajectories", batch.num_rows());
     }

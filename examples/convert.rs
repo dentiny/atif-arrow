@@ -1,28 +1,16 @@
 use std::error::Error;
 
-use arrow_array::{Float64Array, Int64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, Float64Array, Int64Array, ListArray, StringArray, StructArray};
 use atif_arrow::{parse_trajectory, to_record_batch, trajectory_schema};
 
-// A complete local input: no data download or credentials required.
-const DOCUMENT: &str = r#"{
-  "schema_version": "ATIF-v1.8",
-  "agent": {"name": "example", "version": "1"},
-  "steps": [
-    {"step_id": 1, "source": "user", "message": "Say hello."},
-    {"step_id": 2, "source": "agent", "message": "Hello!",
-     "metrics": {"prompt_tokens": 12, "completion_tokens": 4, "cost_usd": 0.001}}
-  ],
-  "final_metrics": {
-    "total_prompt_tokens": 12,
-    "total_completion_tokens": 4,
-    "total_cost_usd": 0.001,
-    "total_steps": 2
-  }
-}"#;
-
+// cargo run -- /path/to/trajectory.json
 fn main() -> Result<(), Box<dyn Error>> {
-    let parsed = parse_trajectory(DOCUMENT)?;
-    let batch = to_record_batch(&parsed, Some("embedded://example"), 1)?;
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: convert <trajectory.json>")?;
+    let json = std::fs::read_to_string(&path)?;
+    let parsed = parse_trajectory(&json)?;
+    let batch = to_record_batch(&parsed, Some(&path), 1)?;
     assert_eq!(batch.schema(), trajectory_schema());
 
     // Read typed Arrow columns. Each row contains one entire trajectory.
@@ -51,17 +39,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
-    assert_eq!(raw.value(0), DOCUMENT);
+    assert_eq!(raw.value(0), json);
 
+    println!("Source: {path}");
     println!(
-        "ATIF-v1.8 -> Arrow: {} row, {} columns",
+        "{} -> Arrow: {} row, {} columns",
+        parsed.trajectory.schema_version,
         batch.num_rows(),
         batch.num_columns()
     );
     println!("Agent: {}", name.value(0));
     println!("Steps: {}", steps.value_length(0));
-    println!("Total prompt tokens: {}", tokens.value(0));
-    println!("Total cost (USD): {}", cost.value(0));
-    println!("Original JSON preserved: {}", raw.value(0) == DOCUMENT);
+    if !metrics.is_null(0) && !tokens.is_null(0) {
+        println!("Total prompt tokens: {}", tokens.value(0));
+    }
+    if !metrics.is_null(0) && !cost.is_null(0) {
+        println!("Total cost (USD): {}", cost.value(0));
+    }
+    println!("Original JSON preserved: {}", raw.value(0) == json);
     Ok(())
 }

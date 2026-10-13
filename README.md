@@ -37,61 +37,60 @@ inspect tool usage, or prepare trajectories for downstream analysis or training.
 The library supplies structured data; your pipeline chooses queries, training
 samples, and export formats.
 
-## Try it locally
+## Quick start from crates.io
 
-You need a Rust toolchain with Cargo. From a fresh checkout:
+You need a Rust toolchain with Cargo. Create a project and add the published crate:
 
 ```sh
-git clone https://github.com/dentiny/atif-arrow.git
-cd atif-arrow
-cargo run --locked -p atif-arrow --example convert
+cargo new atif-demo --edition 2021
+cd atif-demo
+cargo add atif-arrow@0.1.0
 ```
 
-Already cloned the repository? Run the last command from its root. The example
-uses an embedded two-step trajectory with token and cost metrics; it needs no
-external data or credentials. Cargo may download dependencies on the first build.
-
-Expected output:
-
-```text
-ATIF-v1.8 -> Arrow: 1 row, 13 columns
-Agent: example
-Steps: 2
-Total prompt tokens: 12
-Total cost (USD): 0.001
-Original JSON preserved: true
-```
-
-See [the runnable example](examples/convert.rs) to inspect how those values are
-read from Arrow columns. To try a real public Terminal-Bench trajectory, follow
-[the Harbor Hub example](examples/README.md).
-
-## Use it in your Rust project
-
-Add the conversion library to your `Cargo.toml`:
-
-```toml
-[dependencies]
-atif-arrow = { git = "https://github.com/dentiny/atif-arrow.git" }
-```
-
-Convert one JSON document:
+Replace `src/main.rs` with:
 
 ```rust
 use atif_arrow::{parse_trajectory, to_record_batch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let document = r#"{
-      "schema_version": "ATIF-v1.8",
-      "agent": {"name": "example", "version": "1"},
-      "steps": [{"step_id": 1, "source": "user", "message": "hello"}]
-    }"#;
-    let parsed = parse_trajectory(document)?;
-    let batch = to_record_batch(&parsed, Some("trajectory.json"), 1)?;
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: atif-demo <trajectory.json>")?;
+    let json = std::fs::read_to_string(&path)?;
+    let parsed = parse_trajectory(&json)?;
+    let batch = to_record_batch(&parsed, Some(&path), 1)?;
     println!("{} row, {} columns", batch.num_rows(), batch.num_columns());
     Ok(())
 }
 ```
+
+Pass the path to an ATIF JSON file:
+
+```sh
+cargo run -- /path/to/trajectory.json
+```
+
+For a first run, save [this sample trajectory](examples/trajectory.json) as
+`trajectory.json` and run `cargo run -- trajectory.json`. Expected output:
+
+```text
+1 row, 13 columns
+```
+
+The file path is recorded in the row's `source_uri`. Cargo may download
+dependencies on the first build.
+
+For an existing project, `cargo add atif-arrow@0.1.0` adds the equivalent
+`Cargo.toml` dependency:
+
+```toml
+[dependencies]
+atif-arrow = "0.1.0"
+```
+
+The package name is `atif-arrow`; Rust imports use `atif_arrow`.
+See [crates.io](https://crates.io/crates/atif-arrow) for the published package and
+[docs.rs](https://docs.rs/atif-arrow/0.1.0/atif_arrow/) for its API documentation.
 
 This produces one row with 13 top-level columns. `agent` is a struct, `steps` is
 an ordered list of structs, and `final_metrics` holds totals supplied by the
@@ -107,9 +106,14 @@ Choose the entry point that matches your input:
 | An async JSON/JSONL source or OpenDAL object | `atif-io`: `TrajectoryReader` |
 | A known public Harbor Hub object path | `opendal-service-harborhub` + `atif-io` |
 
-The I/O crates can also be added as Git dependencies from this repository.
-See the [usage guide](docs/usage.md) for batching, JSONL, storage configuration,
-provenance, and error handling.
+`atif-arrow` is available on crates.io. The `atif-io` and
+`opendal-service-harborhub` crates currently require the repository source; the
+[usage guide](docs/usage.md) gives their local path dependencies alongside each
+example. It also covers batching, JSONL, storage configuration, provenance, and
+error handling.
+
+For a file-based example that reads token/cost metrics from Arrow columns, or a
+real public Terminal-Bench trajectory, see [the examples guide](examples/README.md).
 
 ## Current scope
 
@@ -131,5 +135,5 @@ provenance, and error handling.
 - [Schema contract](docs/schema.md): columns, nested types, and preservation behavior.
 - [Harbor Hub example](examples/README.md): a real trajectory and its provenance.
 
-To check the workspace locally, run `cargo test --locked --workspace`.
+For development from a repository checkout, run `cargo test --locked --workspace`.
 Licensed under [MIT](LICENSE).
