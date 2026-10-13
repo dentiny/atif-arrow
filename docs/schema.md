@@ -5,9 +5,8 @@ order as `List<Struct>`. Embedded subagents remain in a JSON field rather than
 adding rows or requiring a recursive Arrow type. `session_id` is run-scoped,
 can repeat, and is not a primary key; neither identifier is synthesized.
 
-This contract targets ATIF v1.0–v1.8. It defines the planned converter output;
-the current implementation provides core ATIF parsing and text/image/audio
-conversion, with recursive embedded-subagent and reference validation.
+This contract describes the implemented Arrow mapping for ATIF v1.0–v1.8,
+including text/image/audio content and recursive embedded-subagent validation.
 Reference: [Harbor's ATIF RFC at f9f974a](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md).
 
 ## Root fields
@@ -16,7 +15,7 @@ Reference: [Harbor's ATIF RFC at f9f974a](https://github.com/harbor-framework/ha
 
 | Output field | Type | Nullable | Source / meaning |
 | --- | --- | --- | --- |
-| `source_uri` | String | yes | Caller-supplied source location; file readers will use an absolute path. |
+| `source_uri` | String | yes | Caller-supplied source location; OpenDAL readers default to the object path. |
 | `source_record_index` | UInt64 | no | One-based document index within a source; not a trajectory identifier. |
 | `atif_schema_version` | String | no | Original `schema_version`, unchanged. |
 | `session_id` | String | yes | Original run identity; required in ATIF ≤1.6. |

@@ -1,170 +1,85 @@
 # ATIF Arrow
 
-Convert ATIF v1.0–v1.8 trajectory JSON into Arrow record batches. Each trajectory
-becomes one row with a fixed schema; the original JSON is retained in `raw_json`.
+**Turn agent trajectories into Arrow data.**
 
-| Crate | Responsibility |
-| --- | --- |
-| `atif-arrow` | Schema, parsing, validation, and conversion. No storage I/O. |
-| `atif-io` | Async JSON/JSONL readers, provenance, and OpenDAL storage access. |
-| `opendal-service-harborhub` | Read-only OpenDAL backend for Harbor Hub result objects. |
-| `atif-arrow-cli` | Placeholder; CLI commands are not implemented yet. |
+A Rust library for converting
+[ATIF](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md)
+(Agent Trajectory Interchange Format) logs into
+[Apache Arrow](https://arrow.apache.org/) `RecordBatch` values. Each trajectory
+becomes one row containing its agent, ordered steps, tool calls, and observations.
 
-## Convert a trajectory
+- **Compare runs:** a fixed schema for supplied token/cost metrics and tool usage.
+- **Use your storage:** the same JSON/JSONL reader works with any readable OpenDAL
+  backend, including local files, S3, GCS, and Harbor Hub.
+- **Keep the evidence:** validate during ingestion and retain verbatim JSON,
+  unknown fields, and source provenance.
+
+## Convert your first file
+
+With Rust and Cargo installed:
+
+```sh
+cargo new atif-demo --edition 2021
+cd atif-demo
+cargo add atif-arrow@0.1.0
+```
+
+Replace `src/main.rs` with:
 
 ```rust
-use atif_arrow::{parse_trajectory, to_record_batch, trajectory_schema};
+use atif_arrow::{parse_trajectory, to_record_batch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let document = r#"{
-      "schema_version": "ATIF-v1.8",
-      "agent": {"name": "example", "version": "1"},
-      "steps": [{"step_id": 1, "source": "user", "message": "hello"}]
-    }"#;
-    let parsed = parse_trajectory(document)?;
-    let batch = to_record_batch(&parsed, Some("trajectory.json"), 1)?;
-    assert_eq!(batch.schema(), trajectory_schema());
-    assert_eq!(batch.num_rows(), 1);
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: atif-demo <trajectory.json>")?;
+    let json = std::fs::read_to_string(&path)?;
+    let parsed = parse_trajectory(&json)?;
+    let batch = to_record_batch(&parsed, Some(&path), 1)?;
+    println!("{} row, {} columns", batch.num_rows(), batch.num_columns());
     Ok(())
 }
 ```
 
-`parse_trajectory` accepts exactly one JSON document and preserves its text through
-`raw_json()`. Unmodeled fields remain in `additional_fields` and `raw_json`.
-`to_record_batch` uses a caller-supplied source URI (or `None`) and one-based record
-index. See [the schema contract](docs/schema.md) for the complete field mapping.
+Pass an ATIF JSON filepath:
 
-For documents already supplied by the caller, `TrajectoryBatchBuilder` provides
-`append_json` and `flush` without storage I/O. Flush a full batch before appending
-another document.
-
-## Read JSON and JSONL
-
-```rust
-use atif_io::{InputFormat, ReadError, TrajectoryReader};
-use futures::io::AsyncBufRead;
-
-async fn read_jsonl(input: impl AsyncBufRead + Unpin) -> Result<(), ReadError> {
-    let mut reader = TrajectoryReader::new(input, InputFormat::JsonLines, 256, None)?;
-    while let Some(batch) = reader.next_batch().await? {
-        println!("{} trajectories", batch.num_rows());
-    }
-    Ok(())
-}
+```sh
+cargo run -- /path/to/trajectory.json
 ```
 
-- `InputFormat::Json` reads one complete document, including pretty-printed JSON.
-- `InputFormat::JsonLines` reads one document per nonblank line. Empty input yields
-  no batches; empty `Json` input is an error.
-- Batch size must be positive and limits rows, not bytes.
-- `into_stream()` exposes batches as a `Stream<Item = Result<RecordBatch, ReadError>>`.
-  Pending reads can be cancelled and resumed without losing partial input or rows.
+For a first run, save [the sample](examples/trajectory.json) as `trajectory.json`
+and run `cargo run -- trajectory.json`. Output: `1 row, 13 columns`.
+The path is retained in `source_uri`; the input text is retained in `raw_json`.
 
-Record indices start at 1 and exclude blank lines. `raw_json` preserves whitespace,
-including JSONL line endings. Errors include the source URI and record index,
-stop the reader, and discard the current batch; previously yielded batches remain
-available. Reading is async; parsing and conversion run synchronously.
+Reading JSONL or cloud objects? The [storage guide](docs/usage.md) uses one reader
+with local, S3, and GCS operators. To inspect actual token/cost values, see
+[the conversion example](examples/README.md#convert-a-local-json-file).
 
-**Memory use is not bounded.** `Json` input is read into memory in full before
-parsing. `JsonLines` reads one record at a time, but there is no line-length limit,
-so a single long line is also buffered in full. A batch holds up to `batch_size`
-converted rows, each including its `raw_json`. Peak memory therefore grows with the
-largest trajectory times `batch_size`. This is intended for agent trajectories,
-which are usually small. For untrusted or very large input, check object sizes
-first (for example with OpenDAL `stat`) or lower `batch_size`.
+## Choose a crate
 
-### OpenDAL
-
-`TrajectoryReader::open(&operator, path, format, batch_size, source_uri).await`
-reads an object through a caller-configured `opendal::Operator`. Paths are relative
-to the operator's root; `None` uses the path as provenance. Supply a full source
-URI to distinguish storage roots or buckets.
-
-`atif-io` enables OpenDAL's Tokio executor and reqwest HTTP transport with default
-features disabled. Memory is built in. For local files, enable
-`opendal/services-fs` and configure `services::Fs::default().root("/data")`.
-Filesystem support is enabled for tests; S3 and GCS are not enabled.
-
-The reader streams object bytes directly into conversion without an intermediate
-download or per-row batch concatenation. It reuses its input buffer, but parsed
-JSON, normalized JSON, and Arrow buffers still allocate; conversion is not zero-copy.
-OpenDAL access may be deferred until `next_batch`, and errors preserve its cause.
-
-### Harbor Hub
-
-```rust
-use atif_io::{InputFormat, TrajectoryReader};
-use opendal::Operator;
-use opendal_service_harborhub::HarborHub;
-
-async fn read_trial(trial_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    opendal::install_default();
-    let operator = Operator::new(HarborHub::default())?;
-    let path = format!("trials/{trial_id}/trajectory.json");
-    let mut reader = TrajectoryReader::open(
-        &operator, &path, InputFormat::Json, 256,
-        Some(format!("harborhub://{path}")),
-    ).await?;
-    while let Some(batch) = reader.next_batch().await? {
-        println!("{} trajectories", batch.num_rows());
-    }
-    Ok(())
-}
-```
-
-The backend supports anonymous `read`, byte ranges, and `stat` in Harbor's
-`results` bucket. `root("trials/<trial-id>")` makes object paths relative to that
-trial. `endpoint` and `publishable_key` override the Supabase project URL and public
-gateway key; defaults follow [Harbor's public configuration](https://github.com/harbor-framework/harbor/blob/main/src/harbor/auth/constants.py).
-No user bearer token is sent; private results remain subject to server permissions.
-
-Input currently requires a known object path. Job/repo URL discovery, listing,
-authenticated access, writes, and URI registration are not implemented. Direct
-trajectory uploads are optional: `trajectory.json` may only exist inside
-`trial.tar.gz`. Archive bytes can be read, but archive extraction is not implemented.
-See [Harbor's uploader](https://github.com/harbor-framework/harbor/blob/main/src/harbor/upload/uploader.py).
-
-For a runnable example using a verified public Terminal-Bench trajectory, see
-[examples/README.md](examples/README.md).
-
-## Validation
-
-Parsing checks core fields and step rules. Conversion checks mapped field types,
-content, and references, and revalidates step rules for modified inputs and embedded
-subagents. Errors report field paths such as `steps[0].timestamp`.
-
-| Area | Rules |
+| Crate | Use it for |
 | --- | --- |
-| Core fields | ATIF v1.0–v1.8; valid step sources; nonempty steps numbered sequentially from 1; `session_id` required through v1.6. |
-| Timestamps | Valid ISO 8601 values; original precision and timezone representation are preserved. |
-| Agent-only fields | `model_name`, `reasoning_effort`, `reasoning_content`, `tool_calls`, and `metrics` require an agent step. Missing and null fields are unset. |
-| Deterministic agent steps | `llm_call_count = 0` forbids metrics and reasoning content. |
-| Content | Ordered text/image/audio parts; compatible content and media sources, supported MIME types, required paths, and finite nonnegative audio duration. Content arrays require v1.6+; audio requires v1.8+. Harbor audio MIME aliases are accepted. |
-| Embedded subagents | Require v1.7+ and a unique `trajectory_id` within each parent's array. Sibling session IDs may repeat or be omitted. Children are validated recursively. |
-| References | Observation `source_call_id` must match a tool call in the same step. Before v1.7, subagent references require `session_id`; v1.7+ requires `trajectory_id` or `trajectory_path`. ID-only references must match an embedded child. |
-| Mapped types | Reject incompatible types, integer overflow, and non-finite numeric columns. |
+| [atif-arrow](https://crates.io/crates/atif-arrow) | Convert documents already supplied by your code. |
+| `atif-io` | Read JSON/JSONL as Arrow batches through OpenDAL or an async input. |
+| `opendal-service-harborhub` | Access known public Harbor Hub result objects through OpenDAL. |
 
-## Arrow types and limits
+`atif-arrow 0.1.0` is on crates.io. The two I/O crates currently require a local
+checkout; their dependencies are shown in the [storage guide](docs/usage.md) and
+[Harbor example](examples/README.md#harbor-hub). Cargo names use hyphens;
+Rust imports use underscores, such as `atif_arrow`.
 
-The schema is fixed; arbitrary JSON schemas are not inferred. This workspace
-produces Arrow batches; Lance conversion and IPC export are not implemented.
+## Scope
 
-| Input | Arrow representation |
-| --- | --- |
-| Text | `Utf8` |
-| Boolean | `Boolean` |
-| Numeric columns | `Int64`, `UInt64`, `Float64` |
-| Nested objects | `Struct` |
-| Arrays | `List`, including `List<Struct>` |
-| Timestamps | Validated original text in `Utf8` |
-| Dynamic JSON and embedded subagents | JSON text in `Utf8`, preserving arbitrary-precision numbers |
+- **ATIF v1.0–v1.8.** Embedded subagents are validated and retained as JSON.
+- **In-memory Arrow batches.** CLI commands, Python bindings, and built-in
+  Parquet/IPC/Lance export are not implemented.
+- **Batch size limits rows, not bytes.** Individual JSON/JSONL records are buffered
+  in full, and each row includes its raw JSON.
+- **Harbor Hub requires a public object path.** Discovery, listing, authenticated
+  access, and archive extraction are not implemented. External references are
+  retained without fetching their targets.
 
-String messages and observations become text content-part lists. Optional nulls
-and empty collections remain distinct; list elements are non-null. Media paths,
-MIME spelling, and subagent/continuation references are preserved. Referenced files
-are not fetched, extracted, or verified. Metrics and identifiers are not synthesized.
+[API docs](https://docs.rs/atif-arrow/0.1.0/atif_arrow/) ·
+[Schema](docs/schema.md) · [Reference](docs/reference.md) · [Examples](examples/README.md)
 
-The converter does not produce native Arrow temporal types (`Timestamp`, dates,
-times, `Duration`, `Interval`), `Decimal`, `Binary`, `Map`, `Union`, `LargeList`,
-`FixedSizeList`, smaller integer types, or `Float16`/`Float32`. Supporting these
-requires changes to the schema and mapping.
+For development: `cargo test --locked --workspace`. Licensed under [MIT](LICENSE).
