@@ -2,7 +2,7 @@ use std::error::Error;
 
 use arrow_array::{cast::AsArray, types::UInt64Type};
 
-use futures::{io::Cursor, TryStreamExt};
+use futures::{io::Cursor, StreamExt, TryStreamExt};
 
 use arrow_json::{writer::LineDelimited, WriterBuilder};
 use atif_arrow::trajectory_schema;
@@ -147,6 +147,46 @@ async fn reports_record_errors_and_stops_without_yielding_a_partial_batch() {
             })
         ));
         assert!(reader.next_batch().await.unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn parallel_stream_matches_serial_stream() {
+    let document = |id: usize| DOCUMENT.replace("hello", &format!("message {id}"));
+    let lines: Vec<_> = (0..23).map(document).collect();
+    let valid = format!("\n{}\r\n", lines.join("\r\n \n"));
+    let invalid = |replacements: &[(usize, &[u8])]| {
+        let mut lines: Vec<_> = lines.iter().map(|line| line.as_bytes()).collect();
+        for &(at, line) in replacements {
+            lines[at] = line;
+        }
+        lines.join(b"\n".as_slice())
+    };
+    let inputs = [
+        (InputFormat::JsonLines, valid.into_bytes()),
+        (InputFormat::JsonLines, Vec::new()),
+        (InputFormat::JsonLines, invalid(&[(0, b"{")])),
+        (InputFormat::JsonLines, invalid(&[(13, b"{")])),
+        (InputFormat::JsonLines, invalid(&[(22, &[0xff])])),
+        (InputFormat::JsonLines, invalid(&[(5, b"{"), (6, &[0xff])])),
+        (InputFormat::Json, DOCUMENT.into()),
+        (InputFormat::Json, Vec::new()),
+    ];
+    for (format, input) in inputs {
+        for batch_size in [1, 4] {
+            let reader = || {
+                TrajectoryReader::new(Cursor::new(input.clone()), format, batch_size, None).unwrap()
+            };
+            let collect = |stream: Vec<Result<_, ReadError>>| {
+                stream
+                    .into_iter()
+                    .map(|batch| batch.map_err(|error| error.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            let serial = collect(reader().into_stream().collect().await);
+            let parallel = collect(reader().into_parallel_stream(3).collect().await);
+            assert_eq!(parallel, serial);
+        }
     }
 }
 

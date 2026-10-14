@@ -19,6 +19,8 @@ documents; flush a full batch before appending another document.
 - Batch size must be positive and limits rows, not bytes.
 - `into_stream()` exposes batches as a `Stream<Item = Result<RecordBatch, ReadError>>`.
   Pending reads can be cancelled and resumed without losing partial input or rows.
+- `into_parallel_stream(n)` yields the same batches and first error, but converts up to
+  `n` batches at once on Tokio's blocking pool. It must be polled in a Tokio runtime.
 
 Record indices start at 1 and exclude blank lines. `raw_json` preserves whitespace,
 including JSONL line endings. Errors include the source URI and record index,
@@ -27,10 +29,11 @@ available. Reading is async; parsing and conversion run synchronously.
 
 **Memory use is not bounded.** `Json` input is read into memory in full before
 parsing. `JsonLines` reads one record at a time, but there is no line-length limit,
-so a single long line is also buffered in full. A batch holds up to `batch_size`
-converted rows, each including its `raw_json`. Peak memory grows with record size and the
-number of rows retained in a batch. For large input, check object sizes first
-(for example with OpenDAL `stat`) or lower `batch_size`.
+so a single long line is also buffered in full. A batch holds the text of up to
+`batch_size` documents until conversion, then the converted rows, each including its
+`raw_json`. Peak memory grows with record size, `batch_size`, and, for
+`into_parallel_stream(n)`, the `n` batches in flight. For large input, check object
+sizes first (for example with OpenDAL `stat`) or lower `batch_size`.
 
 ## OpenDAL access
 
@@ -43,8 +46,8 @@ features disabled. Enable each storage backend's `services-*` feature in your
 application, such as `services-fs`, `services-s3`, or `services-gcs`.
 
 The reader streams object bytes directly into conversion without an intermediate
-download or per-row batch concatenation. It reuses its input buffer, but parsed
-JSON, normalized JSON, and Arrow buffers still allocate; conversion is not zero-copy.
+download or per-row batch concatenation. Document text, parsed JSON, normalized JSON,
+and Arrow buffers allocate; conversion is not zero-copy.
 OpenDAL access may be deferred until `next_batch`, and errors preserve its cause.
 
 ## Harbor Hub behavior
