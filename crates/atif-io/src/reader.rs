@@ -6,7 +6,7 @@ use futures::{
     stream, Stream, StreamExt,
 };
 
-use crate::ReadError;
+use crate::{error::BoxError, ReadError};
 
 /// The document layout supplied to a trajectory reader.
 #[derive(Debug, Clone, Copy)]
@@ -89,7 +89,11 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
                 Ok(None) => {}
                 Err(source) => {
                     self.done = true;
-                    error = Some(record_error(&self.source_uri, self.record_index, source));
+                    error = Some(ReadError::record(
+                        &self.source_uri,
+                        self.record_index,
+                        source,
+                    ));
                 }
             }
         }
@@ -116,8 +120,7 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         })
     }
 
-    /// Like [`into_stream`](Self::into_stream), but converts up to `parallelism` batches at
-    /// once on Tokio's blocking pool. Batches keep input order; must be polled in a Tokio runtime.
+    /// Yields the same batches and first error as [`into_stream`](Self::into_stream), in order.
     pub fn into_parallel_stream(
         self,
         parallelism: usize,
@@ -145,16 +148,6 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
     }
 }
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-fn record_error(source_uri: &Option<String>, record_index: u64, source: BoxError) -> ReadError {
-    ReadError::Record {
-        source_uri: source_uri.clone(),
-        record_index,
-        source,
-    }
-}
-
 /// Documents numbered from `first_index`, followed by the read error that ended input.
 struct Batch {
     documents: Vec<String>,
@@ -173,7 +166,7 @@ impl Batch {
         let mut batch = None;
         if !self.documents.is_empty() {
             let error = |record_index, source: ConversionError| {
-                record_error(&self.source_uri, record_index, source.into())
+                ReadError::record(&self.source_uri, record_index, source.into())
             };
             let mut builder = TrajectoryBatchBuilder::new(self.documents.len())
                 .map_err(|source| error(self.first_index, source))?;

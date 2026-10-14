@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 /// A reader configuration error or a record failure with source provenance.
 #[derive(Debug)]
 pub enum ReadError {
@@ -11,8 +13,18 @@ pub enum ReadError {
     Record {
         source_uri: Option<String>,
         record_index: u64,
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: BoxError,
     },
+}
+
+impl ReadError {
+    pub(crate) fn record(source_uri: &Option<String>, record_index: u64, source: BoxError) -> Self {
+        Self::Record {
+            source_uri: source_uri.clone(),
+            record_index,
+            source,
+        }
+    }
 }
 
 impl fmt::Display for ReadError {
