@@ -155,17 +155,20 @@ async fn parallel_stream_matches_serial_stream() {
     let document = |id: usize| DOCUMENT.replace("hello", &format!("message {id}"));
     let lines: Vec<_> = (0..23).map(document).collect();
     let valid = format!("\n{}\r\n", lines.join("\r\n \n"));
-    let invalid = |at: usize, line: &[u8]| {
+    let invalid = |replacements: &[(usize, &[u8])]| {
         let mut lines: Vec<_> = lines.iter().map(|line| line.as_bytes()).collect();
-        lines[at] = line;
+        for &(at, line) in replacements {
+            lines[at] = line;
+        }
         lines.join(b"\n".as_slice())
     };
     let inputs = [
         (InputFormat::JsonLines, valid.into_bytes()),
         (InputFormat::JsonLines, Vec::new()),
-        (InputFormat::JsonLines, invalid(0, b"{")),
-        (InputFormat::JsonLines, invalid(13, b"{")),
-        (InputFormat::JsonLines, invalid(22, &[0xff])),
+        (InputFormat::JsonLines, invalid(&[(0, b"{")])),
+        (InputFormat::JsonLines, invalid(&[(13, b"{")])),
+        (InputFormat::JsonLines, invalid(&[(22, &[0xff])])),
+        (InputFormat::JsonLines, invalid(&[(5, b"{"), (6, &[0xff])])),
         (InputFormat::Json, DOCUMENT.into()),
         (InputFormat::Json, Vec::new()),
     ];

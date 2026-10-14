@@ -21,11 +21,11 @@ pub struct TrajectoryReader<R> {
     reader: R,
     format: InputFormat,
     batch_size: usize,
-    // Keeps converted rows across cancellation until the batch is flushed.
-    builder: TrajectoryBatchBuilder,
     source_uri: Option<String>,
-    // Reused document buffer; partial bytes survive cancellation, including split UTF-8.
+    // Partial bytes survive cancellation, including split UTF-8.
     buffer: Vec<u8>,
+    // Documents of the pending batch; survive cancellation until converted.
+    documents: Vec<String>,
     // One-based index of the next document; blank JSONL lines do not advance it.
     record_index: u64,
     done: bool,
@@ -42,15 +42,13 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         if batch_size == 0 {
             return Err(ReadError::InvalidBatchSize);
         }
-        let builder = TrajectoryBatchBuilder::new(batch_size)
-            .map_err(|source| record_error(&source_uri, 1, source.into()))?;
         Ok(Self {
             reader,
             format,
             batch_size,
-            builder,
             source_uri,
             buffer: Vec::new(),
+            documents: Vec::new(),
             record_index: 1,
             done: false,
         })
@@ -70,7 +68,8 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
             };
             let input = String::from_utf8(std::mem::take(&mut self.buffer))?;
             if matches!(self.format, InputFormat::JsonLines) && input.trim().is_empty() {
-                self.recycle(input);
+                self.buffer = input.into_bytes();
+                self.buffer.clear();
                 continue;
             }
             return Ok(Some(input));
@@ -78,46 +77,36 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         Ok(None)
     }
 
-    /// Reads one document into the converter.
-    async fn read_record(&mut self) -> Result<bool, BoxError> {
-        let Some(input) = self.read_document().await? else {
-            return Ok(false);
-        };
-        self.builder
-            .append_json(&input, self.source_uri.as_deref(), self.record_index)?;
-        self.recycle(input);
-        Ok(true)
-    }
-
-    fn recycle(&mut self, input: String) {
-        self.buffer = input.into_bytes();
-        self.buffer.clear();
-    }
-
-    fn record_error(&self, record_index: u64, source: BoxError) -> ReadError {
-        record_error(&self.source_uri, record_index, source)
+    /// Reads up to `batch_size` documents; a read error ends input after them.
+    async fn read_batch(&mut self) -> Batch {
+        let mut error = None;
+        while !self.done && self.documents.len() < self.batch_size {
+            match self.read_document().await {
+                Ok(Some(document)) => {
+                    self.documents.push(document);
+                    self.record_index += 1;
+                }
+                Ok(None) => {}
+                Err(source) => {
+                    self.done = true;
+                    error = Some(record_error(&self.source_uri, self.record_index, source));
+                }
+            }
+        }
+        let documents = std::mem::take(&mut self.documents);
+        Batch {
+            first_index: self.record_index - documents.len() as u64,
+            documents,
+            source_uri: self.source_uri.clone(),
+            error,
+        }
     }
 
     /// Returns the next batch, or None at EOF; pending reads can be cancelled and resumed.
     pub async fn next_batch(&mut self) -> Result<Option<RecordBatch>, ReadError> {
-        if self.done {
-            return Ok(None);
-        }
-        let first_index = self.record_index - self.builder.num_rows() as u64;
-        while self.builder.num_rows() < self.batch_size {
-            match self.read_record().await {
-                Ok(true) => self.record_index += 1,
-                Ok(false) => break,
-                Err(source) => {
-                    self.done = true;
-                    return Err(self.record_error(self.record_index, source));
-                }
-            }
-        }
-        self.builder.flush().map_err(|source| {
-            self.done = true;
-            self.record_error(first_index, source.into())
-        })
+        let result = self.read_batch().await.convert();
+        self.done |= result.is_err();
+        result
     }
 
     /// Exposes batches as a stream that ends at EOF or after the first error.
@@ -133,37 +122,25 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         self,
         parallelism: usize,
     ) -> impl Stream<Item = Result<RecordBatch, ReadError>> {
-        stream::try_unfold(self, |mut reader| async move {
-            let first_index = reader.record_index;
-            let mut documents = Vec::new();
-            while documents.len() < reader.batch_size {
-                match reader.read_document().await {
-                    Ok(Some(document)) => documents.push(document),
-                    Ok(None) => break,
-                    Err(source) => {
-                        reader.done = true;
-                        let record_index = first_index + documents.len() as u64;
-                        return Err(reader.record_error(record_index, source));
-                    }
-                }
+        stream::unfold(self, |mut reader| async move {
+            let batch = reader.read_batch().await;
+            if batch.is_empty() {
+                return None;
             }
-            if documents.is_empty() {
-                return Ok(None);
-            }
-            reader.record_index += documents.len() as u64;
-            let source_uri = reader.source_uri.clone();
-            let task =
-                tokio::task::spawn_blocking(move || convert(&documents, &source_uri, first_index));
-            Ok(Some((task, reader)))
-        })
-        .map(|task| async {
-            task?
-                .await
-                .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()))
+            Some((tokio::task::spawn_blocking(move || batch.convert()), reader))
         })
         .buffered(parallelism.max(1))
+        .filter_map(|result| {
+            let result =
+                result.unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()));
+            future::ready(result.transpose())
+        })
         .scan(false, |failed, batch| {
-            future::ready((!std::mem::replace(failed, batch.is_err())).then_some(batch))
+            if *failed {
+                return future::ready(None);
+            }
+            *failed = batch.is_err();
+            future::ready(Some(batch))
         })
     }
 }
@@ -178,24 +155,37 @@ fn record_error(source_uri: &Option<String>, record_index: u64, source: BoxError
     }
 }
 
-/// Converts nonempty documents numbered from `first_index` into one batch.
-fn convert(
-    documents: &[String],
-    source_uri: &Option<String>,
+/// Documents numbered from `first_index`, followed by the read error that ended input.
+struct Batch {
+    documents: Vec<String>,
     first_index: u64,
-) -> Result<RecordBatch, ReadError> {
-    let error = |record_index, source: ConversionError| {
-        record_error(source_uri, record_index, source.into())
-    };
-    let mut builder = TrajectoryBatchBuilder::new(documents.len())
-        .map_err(|source| error(first_index, source))?;
-    for (record_index, document) in (first_index..).zip(documents) {
-        builder
-            .append_json(document, source_uri.as_deref(), record_index)
-            .map_err(|source| error(record_index, source))?;
+    source_uri: Option<String>,
+    error: Option<ReadError>,
+}
+
+impl Batch {
+    fn is_empty(&self) -> bool {
+        self.documents.is_empty() && self.error.is_none()
     }
-    let batch = builder
-        .flush()
-        .map_err(|source| error(first_index, source))?;
-    Ok(batch.expect("documents are nonempty"))
+
+    /// Converts the documents, reporting the read error only if they all convert.
+    fn convert(self) -> Result<Option<RecordBatch>, ReadError> {
+        let mut batch = None;
+        if !self.documents.is_empty() {
+            let error = |record_index, source: ConversionError| {
+                record_error(&self.source_uri, record_index, source.into())
+            };
+            let mut builder = TrajectoryBatchBuilder::new(self.documents.len())
+                .map_err(|source| error(self.first_index, source))?;
+            for (record_index, document) in (self.first_index..).zip(&self.documents) {
+                builder
+                    .append_json(document, self.source_uri.as_deref(), record_index)
+                    .map_err(|source| error(record_index, source))?;
+            }
+            batch = builder
+                .flush()
+                .map_err(|source| error(self.first_index, source))?;
+        }
+        self.error.map_or(Ok(batch), Err)
+    }
 }
