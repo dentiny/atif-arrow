@@ -1,8 +1,9 @@
 use arrow_array::RecordBatch;
-use atif_arrow::TrajectoryBatchBuilder;
+use atif_arrow::{ConversionError, TrajectoryBatchBuilder};
 use futures::{
+    future,
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt},
-    stream, Stream,
+    stream, Stream, StreamExt,
 };
 
 use crate::ReadError;
@@ -41,12 +42,8 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         if batch_size == 0 {
             return Err(ReadError::InvalidBatchSize);
         }
-        let builder =
-            TrajectoryBatchBuilder::new(batch_size).map_err(|source| ReadError::Record {
-                source_uri: source_uri.clone(),
-                record_index: 1,
-                source: Box::new(source),
-            })?;
+        let builder = TrajectoryBatchBuilder::new(batch_size)
+            .map_err(|source| record_error(&source_uri, 1, source.into()))?;
         Ok(Self {
             reader,
             format,
@@ -59,13 +56,10 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         })
     }
 
-    /// Reads one document into the converter, keeping partial reads in the input buffer.
-    async fn read_record(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        if self.done {
-            return Ok(false);
-        }
-        loop {
-            let eof = match self.format {
+    /// Reads the next document, keeping partial reads in the input buffer.
+    async fn read_document(&mut self) -> Result<Option<String>, BoxError> {
+        while !self.done {
+            self.done = match self.format {
                 InputFormat::Json => {
                     self.reader.read_to_end(&mut self.buffer).await?;
                     true
@@ -74,20 +68,34 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
                     self.reader.read_until(b'\n', &mut self.buffer).await? == 0
                 }
             };
-            self.done = eof;
-            let input = std::str::from_utf8(&self.buffer)?;
+            let input = String::from_utf8(std::mem::take(&mut self.buffer))?;
             if matches!(self.format, InputFormat::JsonLines) && input.trim().is_empty() {
-                self.buffer.clear();
-                if eof {
-                    return Ok(false);
-                }
+                self.recycle(input);
                 continue;
             }
-            self.builder
-                .append_json(input, self.source_uri.as_deref(), self.record_index)?;
-            self.buffer.clear();
-            return Ok(true);
+            return Ok(Some(input));
         }
+        Ok(None)
+    }
+
+    /// Reads one document into the converter.
+    async fn read_record(&mut self) -> Result<bool, BoxError> {
+        let Some(input) = self.read_document().await? else {
+            return Ok(false);
+        };
+        self.builder
+            .append_json(&input, self.source_uri.as_deref(), self.record_index)?;
+        self.recycle(input);
+        Ok(true)
+    }
+
+    fn recycle(&mut self, input: String) {
+        self.buffer = input.into_bytes();
+        self.buffer.clear();
+    }
+
+    fn record_error(&self, record_index: u64, source: BoxError) -> ReadError {
+        record_error(&self.source_uri, record_index, source)
     }
 
     /// Returns the next batch, or None at EOF; pending reads can be cancelled and resumed.
@@ -102,21 +110,13 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
                 Ok(false) => break,
                 Err(source) => {
                     self.done = true;
-                    return Err(ReadError::Record {
-                        source_uri: self.source_uri.clone(),
-                        record_index: self.record_index,
-                        source,
-                    });
+                    return Err(self.record_error(self.record_index, source));
                 }
             }
         }
         self.builder.flush().map_err(|source| {
             self.done = true;
-            ReadError::Record {
-                source_uri: self.source_uri.clone(),
-                record_index: first_index,
-                source: Box::new(source),
-            }
+            self.record_error(first_index, source.into())
         })
     }
 
@@ -126,4 +126,76 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
             Ok(reader.next_batch().await?.map(|batch| (batch, reader)))
         })
     }
+
+    /// Like [`into_stream`](Self::into_stream), but converts up to `parallelism` batches at
+    /// once on Tokio's blocking pool. Batches keep input order; must be polled in a Tokio runtime.
+    pub fn into_parallel_stream(
+        self,
+        parallelism: usize,
+    ) -> impl Stream<Item = Result<RecordBatch, ReadError>> {
+        stream::try_unfold(self, |mut reader| async move {
+            let first_index = reader.record_index;
+            let mut documents = Vec::new();
+            while documents.len() < reader.batch_size {
+                match reader.read_document().await {
+                    Ok(Some(document)) => documents.push(document),
+                    Ok(None) => break,
+                    Err(source) => {
+                        reader.done = true;
+                        let record_index = first_index + documents.len() as u64;
+                        return Err(reader.record_error(record_index, source));
+                    }
+                }
+            }
+            if documents.is_empty() {
+                return Ok(None);
+            }
+            reader.record_index += documents.len() as u64;
+            let source_uri = reader.source_uri.clone();
+            let task =
+                tokio::task::spawn_blocking(move || convert(&documents, &source_uri, first_index));
+            Ok(Some((task, reader)))
+        })
+        .map(|task| async {
+            task?
+                .await
+                .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()))
+        })
+        .buffered(parallelism.max(1))
+        .scan(false, |failed, batch| {
+            future::ready((!std::mem::replace(failed, batch.is_err())).then_some(batch))
+        })
+    }
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+fn record_error(source_uri: &Option<String>, record_index: u64, source: BoxError) -> ReadError {
+    ReadError::Record {
+        source_uri: source_uri.clone(),
+        record_index,
+        source,
+    }
+}
+
+/// Converts nonempty documents numbered from `first_index` into one batch.
+fn convert(
+    documents: &[String],
+    source_uri: &Option<String>,
+    first_index: u64,
+) -> Result<RecordBatch, ReadError> {
+    let error = |record_index, source: ConversionError| {
+        record_error(source_uri, record_index, source.into())
+    };
+    let mut builder = TrajectoryBatchBuilder::new(documents.len())
+        .map_err(|source| error(first_index, source))?;
+    for (record_index, document) in (first_index..).zip(documents) {
+        builder
+            .append_json(document, source_uri.as_deref(), record_index)
+            .map_err(|source| error(record_index, source))?;
+    }
+    let batch = builder
+        .flush()
+        .map_err(|source| error(first_index, source))?;
+    Ok(batch.expect("documents are nonempty"))
 }

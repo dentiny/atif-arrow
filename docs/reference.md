@@ -19,6 +19,8 @@ documents; flush a full batch before appending another document.
 - Batch size must be positive and limits rows, not bytes.
 - `into_stream()` exposes batches as a `Stream<Item = Result<RecordBatch, ReadError>>`.
   Pending reads can be cancelled and resumed without losing partial input or rows.
+- `into_parallel_stream(n)` yields the same batches and first error, but converts up to
+  `n` batches at once on Tokio's blocking pool. It must be polled in a Tokio runtime.
 
 Record indices start at 1 and exclude blank lines. `raw_json` preserves whitespace,
 including JSONL line endings. Errors include the source URI and record index,

@@ -13,6 +13,7 @@ atif-arrow.workspace = true
 arrow-array.workspace = true
 opendal.workspace = true
 futures.workspace = true
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 arrow-json.workspace = true
