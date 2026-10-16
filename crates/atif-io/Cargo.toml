@@ -8,15 +8,21 @@ license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 
+[features]
+default = ["gzip"]
+gzip = ["dep:async-compression"]
+
 [dependencies]
 atif-arrow.workspace = true
 arrow-array.workspace = true
+async-compression = { version = "0.4.50", default-features = false, features = ["futures-io", "gzip"], optional = true }
 opendal.workspace = true
 futures.workspace = true
 tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 arrow-json.workspace = true
+flate2 = "1"
 serde_json.workspace = true
 opendal = { workspace = true, features = ["services-fs"] }
 tempfile = "3"
