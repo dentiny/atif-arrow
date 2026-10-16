@@ -137,3 +137,84 @@ async fn preserves_storage_errors_and_custom_source_identity() {
     assert!(error.to_string().contains(uri));
     assert!(reader.next_batch().await.unwrap().is_none());
 }
+
+#[cfg(feature = "gzip")]
+#[tokio::test]
+async fn reads_gzip_objects_across_members() {
+    use std::io::Write;
+
+    use flate2::{write::GzEncoder, Compression};
+
+    fn gzip(data: &str) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(data.as_bytes()).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    let operator = Operator::new(services::Memory::default()).unwrap();
+    let line = format!("{DOCUMENT}\n");
+    let mut compressed = gzip(&line);
+    compressed.extend(gzip(&line));
+    operator
+        .write("trajectories.jsonl.gz", compressed.clone())
+        .await
+        .unwrap();
+    let batches = TrajectoryReader::open_gzip(
+        &operator,
+        "trajectories.jsonl.gz",
+        InputFormat::JsonLines,
+        8,
+        None,
+    )
+    .await
+    .unwrap()
+    .into_stream()
+    .try_collect::<Vec<_>>()
+    .await
+    .unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].num_rows(), 2);
+    let raw = batches[0]
+        .column_by_name("raw_json")
+        .unwrap()
+        .as_string::<i32>();
+    let sources = batches[0]
+        .column_by_name("source_uri")
+        .unwrap()
+        .as_string::<i32>();
+    for row in 0..2 {
+        assert_eq!(raw.value(row), line);
+        assert_eq!(sources.value(row), "trajectories.jsonl.gz");
+    }
+
+    operator
+        .write(
+            "truncated.jsonl.gz",
+            compressed[..compressed.len() - 1].to_vec(),
+        )
+        .await
+        .unwrap();
+    let mut reader = TrajectoryReader::open_gzip(
+        &operator,
+        "truncated.jsonl.gz",
+        InputFormat::JsonLines,
+        8,
+        None,
+    )
+    .await
+    .unwrap();
+    let error = loop {
+        match reader.next_batch().await {
+            Ok(Some(_)) => continue,
+            Ok(None) => panic!("truncated GZIP object must fail"),
+            Err(error) => break error,
+        }
+    };
+    let ReadError::Record { source, .. } = error else {
+        panic!("unexpected truncated-object error: {error}");
+    };
+    assert_eq!(
+        source.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
+}

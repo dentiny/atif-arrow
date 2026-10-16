@@ -44,6 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Use `InputFormat::Json` for a single JSON document.
 
+For a GZIP object such as `runs/trajectories.jsonl.gz`, call
+`TrajectoryReader::open_gzip` with the same arguments. Decompression is
+incremental, and concatenated GZIP members read as one stream. It is enabled by
+the default `gzip` feature; set `default-features = false` to drop it.
+
 ## Change the backend
 
 Replace only the `let operator = ...` statement above. Keep the same command and
