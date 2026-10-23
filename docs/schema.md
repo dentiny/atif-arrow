@@ -74,8 +74,7 @@ Arrow `Union` or `Null` type.
 ## Embedded media schema
 
 `trajectory_schema_with_media()` adds one non-null `media: List<Struct>` field
-after the unchanged 13 native fields. The schema metadata includes
-`atif-arrow.media-schema-version=1`. All media list elements are non-null; a
+after the unchanged 13 native fields. All media list elements are non-null; a
 trajectory with no images/audio has an empty list. This is one dataset row, not
 an assets table. Only the opt-in `MediaReader` / `MediaResolver` emits this schema.
 

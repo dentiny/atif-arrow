@@ -39,7 +39,5 @@ pub fn trajectory_schema_with_media() -> SchemaRef {
     let native = trajectory_schema();
     let mut fields = native.fields().to_vec();
     fields.push(Arc::new(media_field()));
-    let mut metadata = native.metadata().clone();
-    metadata.insert("atif-arrow.media-schema-version".into(), "1".into());
-    Arc::new(Schema::new_with_metadata(fields, metadata))
+    Arc::new(Schema::new_with_metadata(fields, native.metadata().clone()))
 }

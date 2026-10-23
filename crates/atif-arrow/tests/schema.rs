@@ -15,7 +15,7 @@ fn media_schema_keeps_native_fields_and_uses_storage_neutral_large_binary() {
     assert_eq!(native.fields().len(), 13);
     assert_eq!(schema.fields().len(), 14);
     assert_eq!(&schema.fields()[..13], native.fields().as_ref());
-    assert_eq!(schema.metadata()["atif-arrow.media-schema-version"], "1");
+    assert_eq!(schema.metadata(), native.metadata());
     let media = schema.field(13);
     assert!(!media.is_nullable());
     assert_eq!(media.name(), "media");
