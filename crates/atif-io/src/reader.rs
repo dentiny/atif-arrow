@@ -6,7 +6,7 @@ use futures::{
     stream, Stream, StreamExt,
 };
 
-use crate::{error::BoxError, ReadError};
+use crate::{error::BoxError, MediaReader, MediaResolver, ReadError};
 
 /// The document layout supplied to a trajectory reader.
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +32,12 @@ pub struct TrajectoryReader<R> {
 }
 
 impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
+    /// Adds dataset-owned media to each batch using the caller's storage scope.
+    /// Use a small batch size for large media, typically one trajectory per batch.
+    pub fn with_media(self, resolver: MediaResolver) -> MediaReader<R> {
+        MediaReader::new(self, resolver)
+    }
+
     /// Creates a reader with a positive batch size and optional source provenance.
     pub fn new(
         reader: R,

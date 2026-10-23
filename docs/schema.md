@@ -58,8 +58,8 @@ absent even when its child fields are required.
   effort remains a JSON number. Arbitrary tool arguments are not inferred into columns.
 - Timestamps remain strings, preserving precision and timezone representation.
   No timezone, missing metric, token IDs, or logprobs are inferred.
-- Media paths remain unchanged. Resolve relative paths against the source
-  document's directory; this library will not fetch, embed, or verify media files.
+- Media paths remain unchanged. The pure converter preserves references;
+  opt-in `atif-io` media readers resolve them as described below.
 - Subagent and continuation references are retained, not dereferenced. Validation
   uses version-specific rules: pre-v1.7 references require session IDs; v1.7+
   references require a document ID or external path. ID-only references must
@@ -70,3 +70,44 @@ absent even when its child fields are required.
 
 Supported structural types are `Struct` and `List`; the contract contains no
 Arrow `Union` or `Null` type.
+
+## Embedded media schema
+
+`trajectory_schema_with_media()` adds one non-null `media: List<Struct>` field
+after the unchanged 13 native fields. The schema metadata includes
+`atif-arrow.media-schema-version=1`. All media list elements are non-null; a
+trajectory with no images/audio has an empty list. This is one dataset row, not
+an assets table. Only the opt-in `MediaReader` / `MediaResolver` emits this schema.
+
+| `media[]` field | Arrow type | Nullable | Meaning |
+| --- | --- | --- | --- |
+| `source_locator` | Utf8 | no | RFC 6901 JSON pointer to the original content part in this row's `raw_json`. |
+| `path` | Utf8 | no | Verbatim `source.path`, including inline data URIs. |
+| `resolved_uri` | Utf8 | yes | Resolved object path relative to the supplied operator; null for data URIs and unresolved references. Interpret with the source's configured storage root. |
+| `media_type` | Utf8 | no | Original `source.media_type`, preserving MIME spelling. |
+| `payload` | LargeBinary | yes | Original file bytes or decoded data-URI bytes, without image/audio decoding or transcoding. |
+| `byte_size` | UInt64 | yes | Actual payload size; zero is distinct from null. |
+| `resolution_status` | Utf8 | no | `embedded` when bytes were read; `not_resolved` in explicit reference-only mode. |
+
+Media appears in source encounter order: each step's message, then its
+observation results, followed by recursively embedded subagents. For example:
+
+```text
+/steps/0/message/1
+/steps/0/observation/results/0/content/0
+/subagent_trajectories/0/steps/0/message/0
+```
+
+These point into the original JSON, not the normalized `steps` array. A string
+message normalizes to a text part but has no media entry. Within one trajectory
+row, `source_locator` identifies the content location; it is not a globally
+unique media ID. Repeated paths generate repeated entries and count against
+the byte budgets each time. External continuation/subagent references are not
+followed. All embedded descendants use the containing source document's base
+directory.
+
+Payloads are standard Arrow `LargeBinary`, without Lance-specific extension
+metadata. A downstream writer can choose Blob storage for image/audio payloads.
+Lance file versions, compression, indexes, and document attachment policies are
+outside this reader's responsibility. ATIF v1.0–v1.8 supports text/image/audio;
+video and HTML/Markdown attachment variants are not invented by this extension.

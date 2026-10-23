@@ -6,6 +6,13 @@ pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug)]
 pub enum ReadError {
     InvalidBatchSize,
+    InvalidMediaOptions(String),
+    Media {
+        source_uri: Option<String>,
+        record_index: u64,
+        source_locator: String,
+        source: BoxError,
+    },
     Open {
         source_uri: String,
         source: opendal::Error,
@@ -32,6 +39,19 @@ impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBatchSize => write!(f, "batch size must be greater than zero"),
+            Self::InvalidMediaOptions(message) => {
+                write!(f, "invalid media configuration: {message}")
+            }
+            Self::Media {
+                source_uri,
+                record_index,
+                source_locator,
+                source,
+            } => write!(
+                f,
+                "{}: record {record_index}: media {source_locator}: {source}",
+                source_uri.as_deref().unwrap_or("<input>")
+            ),
             Self::Open { source_uri, source } => {
                 write!(f, "{source_uri}: failed to open source: {source}")
             }
@@ -52,7 +72,8 @@ impl std::error::Error for ReadError {
     /// Exposes the underlying I/O, parsing, or conversion error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidBatchSize => None,
+            Self::InvalidBatchSize | Self::InvalidMediaOptions(_) => None,
+            Self::Media { source, .. } => Some(source.as_ref()),
             Self::Open { source, .. } => Some(source),
             Self::Record { source, .. } => Some(source.as_ref()),
         }

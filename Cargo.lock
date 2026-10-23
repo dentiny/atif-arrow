@@ -203,14 +203,18 @@ version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-json",
+ "arrow-schema",
  "async-compression",
  "atif-arrow",
+ "base64 0.22.1",
+ "crc32fast",
  "flate2",
  "futures",
  "opendal",
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -1354,6 +1358,7 @@ dependencies = [
 name = "opendal-service-harborhub"
 version = "0.1.0"
 dependencies = [
+ "arrow-array",
  "arrow-json",
  "atif-arrow",
  "atif-io",

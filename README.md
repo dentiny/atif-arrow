@@ -13,6 +13,8 @@ becomes one row containing its agent, ordered steps, tool calls, and observation
   backend, including local files, S3, GCS, and Harbor Hub.
 - **Keep the evidence:** validate during ingestion and retain verbatim JSON,
   unknown fields, and source provenance.
+- **Embed media:** opt into `atif-io`'s multimodal reader to resolve image/audio
+  bytes into Arrow `LargeBinary`, including observations and embedded subagents.
 
 ## Convert your first file
 
@@ -67,6 +69,36 @@ with local, S3, and GCS operators. To inspect actual token/cost values, see
 checkout; their dependencies are shown in the [storage guide](docs/usage.md) and
 [Harbor example](examples/README.md#harbor-hub). Cargo names use hyphens;
 Rust imports use underscores, such as `atif_arrow`.
+
+## Read trajectories with embedded media
+
+The existing pure converter and `TrajectoryReader` keep their 13-column schema
+and perform no media I/O. Opt in with a `MediaResolver` and `with_media`:
+
+```rust,no_run
+use atif_io::{InputFormat, MediaOptions, MediaResolver, TrajectoryReader};
+
+# async fn read(operator: opendal::Operator) -> Result<(), Box<dyn std::error::Error>> {
+let path = "runs/trajectory.json"; // relative to the configured OpenDAL root
+let resolver = MediaResolver::new(&operator, path, MediaOptions::default())?;
+let mut reader = TrajectoryReader::open(
+    &operator, path, InputFormat::Json, 1, None,
+).await?.with_media(resolver);
+
+while let Some(batch) = reader.next_batch().await? {
+    // 14 columns: the original fields plus media[].payload: LargeBinary.
+    assert_eq!(batch.schema(), atif_arrow::trajectory_schema_with_media());
+}
+# Ok(())
+# }
+```
+
+Relative media paths use the document's directory in the same operator. Missing
+media fails the batch; explicit reference-only mode sets `resolve_media: false`.
+There are per-media, per-trajectory, and per-batch byte budgets. Media resolution
+does not decode images/audio, follow external trajectories, or depend on Lance.
+See the [media schema](docs/schema.md#embedded-media-schema) and
+[storage examples](docs/usage.md#embed-image-and-audio-bytes).
 
 ## Scope
 

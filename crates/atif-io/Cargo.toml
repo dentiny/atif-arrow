@@ -15,15 +15,23 @@ gzip = ["dep:async-compression"]
 [dependencies]
 atif-arrow.workspace = true
 arrow-array.workspace = true
+arrow-schema.workspace = true
 async-compression = { version = "0.4.50", default-features = false, features = ["futures-io", "gzip"], optional = true }
 opendal.workspace = true
 futures.workspace = true
-tokio = { version = "1", features = ["rt"] }
+base64 = "0.22"
+serde_json.workspace = true
+url = "2"
+tokio = { version = "1", features = ["rt", "fs"] }
 
 [dev-dependencies]
 arrow-json.workspace = true
+crc32fast = "1"
 flate2 = "1"
-serde_json.workspace = true
 opendal = { workspace = true, features = ["services-fs"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }
+
+[[example]]
+name = "multimodal"
+path = "../../examples/multimodal.rs"

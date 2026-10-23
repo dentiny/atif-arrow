@@ -98,11 +98,14 @@ produces Arrow batches; Lance conversion and IPC export are not implemented.
 | Arrays | `List`, including `List<Struct>` |
 | Timestamps | Validated original text in `Utf8` |
 | Dynamic JSON and embedded subagents | JSON text in `Utf8`, preserving arbitrary-precision numbers |
+| Image/audio bytes (opt-in `MediaReader`) | `LargeBinary` in `media[].payload` |
 
 String messages and observations become text content-part lists. Optional nulls
 and empty collections remain distinct; list elements are non-null. Media paths,
-MIME spelling, and subagent/continuation references are preserved. Referenced files
-are not fetched, extracted, or verified. Metrics and identifiers are not synthesized.
+MIME spelling, and subagent/continuation references are preserved. Pure conversion
+does not fetch media. Opt-in `MediaReader` adds image/audio `LargeBinary` payloads;
+see [media reading](usage.md#embed-image-and-audio-bytes). External trajectories
+and archives are not followed or extracted. Metrics and identifiers are not synthesized.
 
 The converter does not produce native Arrow temporal types (`Timestamp`, dates,
 times, `Duration`, `Interval`), `Decimal`, `Binary`, `Map`, `Union`, `LargeList`,
