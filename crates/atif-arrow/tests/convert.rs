@@ -52,7 +52,8 @@ fn converts_text_tools_and_metrics_without_losing_original_data() {
         steps[0]["message"],
         json!([{"type":"text","text":"","source":null}])
     );
-    assert_eq!(steps[1]["message"][0]["text"], "done");
+    // Arrow's standard JSON writer represents binary fields as hex strings.
+    assert_eq!(steps[1]["message"][0]["text"], "646f6e65");
     let arguments: Value = serde_json::from_str(
         steps[1]["tool_calls"][0]["arguments_json"]
             .as_str()
@@ -72,7 +73,7 @@ fn converts_text_tools_and_metrics_without_losing_original_data() {
     assert_eq!(steps[1]["reasoning_effort_json"], "\"high\"");
     assert_eq!(
         steps[1]["observation"]["results"][0]["content"][0]["text"],
-        "ok"
+        "6f6b"
     );
 
     for literal in ["0.5", "1.0", "1e2"] {

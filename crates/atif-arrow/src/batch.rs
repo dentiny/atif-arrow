@@ -2,8 +2,10 @@ use arrow_array::RecordBatch;
 use arrow_json::{reader::Decoder, ReaderBuilder};
 
 use crate::{
-    convert::encode_trajectory, parse::parse_document, trajectory_schema, ConversionError,
-    ParseError,
+    convert::{encode_trajectory, finish_batch},
+    parse::parse_document,
+    schema::json_decoder_schema,
+    ConversionError, ParseError,
 };
 
 /// Converts JSON documents into Arrow batches without reading from an external source.
@@ -21,7 +23,7 @@ impl TrajectoryBatchBuilder {
                 "batch size must be greater than zero",
             )));
         }
-        let decoder = ReaderBuilder::new(trajectory_schema())
+        let decoder = ReaderBuilder::new(json_decoder_schema())
             .with_batch_size(batch_size)
             .build_decoder()?;
         Ok(Self {
@@ -52,6 +54,6 @@ impl TrajectoryBatchBuilder {
 
     /// Returns the accumulated rows and resets the converter for the next batch.
     pub fn flush(&mut self) -> Result<Option<RecordBatch>, ConversionError> {
-        self.decoder.flush().map_err(ConversionError::Arrow)
+        self.decoder.flush()?.map(finish_batch).transpose()
     }
 }

@@ -91,7 +91,8 @@ produces Arrow batches; Lance conversion and IPC export are not implemented.
 
 | Input | Arrow representation |
 | --- | --- |
-| Text | `Utf8` |
+| Message/observation content text | UTF-8 bytes in `LargeBinary` |
+| Other string fields | `Utf8` |
 | Boolean | `Boolean` |
 | Numeric columns | `Int64`, `UInt64`, `Float64` |
 | Nested objects | `Struct` |
@@ -103,6 +104,12 @@ String messages and observations become text content-part lists. Optional nulls
 and empty collections remain distinct; list elements are non-null. Media paths,
 MIME spelling, and subagent/continuation references are preserved. Referenced files
 are not fetched, extracted, or verified. Metrics and identifiers are not synthesized.
+
+`ContentPart.text` is a nullable `LargeBinary` array. Decode its bytes as UTF-8
+when displaying text. Empty strings produce valid zero-length binary values;
+media parts keep null text. The single-document converter, batch builder, and
+serial/parallel readers use the same output schema. Arrow's standard JSON writer
+represents binary values as hex strings, rather than the original readable text.
 
 The converter does not produce native Arrow temporal types (`Timestamp`, dates,
 times, `Duration`, `Interval`), `Decimal`, `Binary`, `Map`, `Union`, `LargeList`,

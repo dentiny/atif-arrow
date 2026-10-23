@@ -1,9 +1,11 @@
 use arrow_array::RecordBatch;
+use arrow_cast::cast;
 use arrow_json::ReaderBuilder;
 use arrow_schema::{DataType, Field, FieldRef, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
+    schema::json_decoder_schema,
     trajectory_schema,
     validation::{validate_details, validate_embedded},
     ConversionError, ParseError, ParsedTrajectory, Trajectory,
@@ -23,13 +25,33 @@ pub fn to_record_batch(
         source_uri,
         source_record_index,
     )?;
-    let mut reader = ReaderBuilder::new(trajectory_schema()).build(encoded.as_bytes())?;
-    reader
+    let mut reader = ReaderBuilder::new(json_decoder_schema()).build(encoded.as_bytes())?;
+    let batch = reader
         .next()
         .ok_or_else(|| {
             ConversionError::Field(ParseError::new("$", "Arrow decoder returned no row"))
         })?
-        .map_err(ConversionError::Arrow)
+        .map_err(ConversionError::Arrow)?;
+    finish_batch(batch)
+}
+
+/// Reuse the decoded UTF-8 bytes with 64-bit offsets as LargeBinary. The shared
+/// finalizer keeps single-document and streaming output schemas identical.
+pub(crate) fn finish_batch(batch: RecordBatch) -> Result<RecordBatch, ConversionError> {
+    let schema = trajectory_schema();
+    let columns = batch
+        .columns()
+        .iter()
+        .zip(schema.fields())
+        .map(|(array, field)| {
+            if array.data_type() == field.data_type() {
+                Ok(array.clone())
+            } else {
+                cast(array, field.data_type())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RecordBatch::try_new(schema, columns)?)
 }
 
 /// Validates and encodes a row for the single-row converter and streaming decoder.
@@ -161,7 +183,7 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         }
         data_type => {
             let valid = match data_type {
-                DataType::Utf8 => value.is_string(),
+                DataType::Utf8 | DataType::LargeBinary => value.is_string(),
                 DataType::Boolean => value.is_boolean(),
                 DataType::Int64 => value.as_i64().is_some(),
                 DataType::UInt64 => value.as_u64().is_some(),

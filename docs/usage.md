@@ -74,5 +74,27 @@ Paths are relative to the operator's root. To retain a full source URI, replace
 `None` with `Some("s3://agent-runs/runs/trajectories.jsonl".into())` for that object.
 Batch size limits rows, not bytes.
 
+## Read content text bytes
+
+Message and observation content uses nullable `LargeBinary` for its `text`
+field. With the existing `batch` from the reader:
+
+```rust
+use arrow_array::{cast::AsArray, Array};
+
+let steps = batch["steps"].as_list::<i32>().value(0);
+let first_message = steps.as_struct()["message"].as_list::<i32>().value(0);
+let text = first_message.as_struct()["text"].as_binary::<i64>();
+if !text.is_null(0) {
+    let value = std::str::from_utf8(text.value(0))?;
+    println!("{value}");
+}
+```
+
+The example accesses a nonempty message. An empty message array has no first
+part; a media part has null `text`. Empty text strings remain non-null empty
+byte values. Metadata, media paths, reasoning content, and `raw_json` remain
+`Utf8`. Media reads and Lance Blob conversion belong to the downstream consumer.
+
 [Harbor Hub](../examples/README.md#harbor-hub) ·
 [Reader behavior and limits](reference.md#reader-behavior) · [Schema](schema.md)

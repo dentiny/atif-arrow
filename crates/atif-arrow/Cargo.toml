@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 arrow-array.workspace = true
+arrow-cast.workspace = true
 arrow-json.workspace = true
 arrow-schema.workspace = true
 serde.workspace = true

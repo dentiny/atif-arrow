@@ -38,7 +38,7 @@ absent even when its child fields are required.
 | --- | --- |
 | `agent` | **name: String**, **version: String**, model_name: String, tool_definitions_json: String/JSON, extra_json: String/JSON |
 | `steps[]` | **step_id: UInt64**, timestamp: String, **source: String**, model_name: String, reasoning_effort_json: String/JSON, **message: List<ContentPart>**, reasoning_content: String, tool_calls: List<ToolCall>, observation: Observation, metrics: Metrics, is_copied_context: Boolean, llm_call_count: UInt64, extra_json: String/JSON |
-| `ContentPart` | **type: String**, text: String, source: MediaSource |
+| `ContentPart` | **type: String**, text: LargeBinary (UTF-8 bytes), source: MediaSource |
 | `MediaSource` | **media_type: String**, **path: String**, duration_sec: Float64 |
 | `ToolCall` | **tool_call_id: String**, **function_name: String**, **arguments_json: String/JSON**, extra_json: String/JSON |
 | `Observation` | **results: List<ObservationResult>** |
@@ -50,7 +50,11 @@ absent even when its child fields are required.
 ## Normalization and preservation
 
 - A string message or observation content becomes one `{type: "text", text: ...}`
-  part, including empty strings. Multimodal arrays preserve part order.
+  part, including empty strings. `ContentPart.text` stores the original string's
+  UTF-8 bytes in nullable Arrow `LargeBinary` with 64-bit offsets. This applies
+  to both `steps[].message[]` and `steps[].observation.results[].content[]`.
+  Empty text is a non-null, zero-length byte value; image/audio parts have null
+  text. Multimodal arrays preserve part order.
 - Missing or null optional fields become Arrow null; empty arrays/objects stay
   empty. `raw_json` retains the distinction between omitted and explicit null.
 - Every `*_json` field carries `atif-arrow.encoding=json` field metadata and
@@ -70,3 +74,12 @@ absent even when its child fields are required.
 
 Supported structural types are `Struct` and `List`; the contract contains no
 Arrow `Union` or `Null` type.
+
+Only content text uses `LargeBinary`. Identifiers, MIME types, media paths,
+reasoning content, JSON fields, and other existing string fields remain `Utf8`.
+No media I/O, Blob tagging, compression, or Lance-specific metadata is applied.
+Embedded subagents remain opaque JSON text, as before.
+
+Arrow's standard JSON writer renders binary values as hex strings. Consumers
+that need the original text should decode the binary value as UTF-8; `raw_json`
+still contains the verbatim input document and its original text representation.

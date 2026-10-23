@@ -72,7 +72,8 @@ async fn batches_jsonl_in_order_with_nested_values_and_provenance() {
     );
     let extra: Value = serde_json::from_str(rows[1]["extra_json"].as_str().unwrap()).unwrap();
     assert_eq!(extra["id"].to_string(), "123456789012345678901234567890");
-    assert_eq!(rows[2]["steps"][0]["message"][0]["text"], "hello");
+    // Binary text is hex-encoded by Arrow's standard JSON writer.
+    assert_eq!(rows[2]["steps"][0]["message"][0]["text"], "68656c6c6f");
 }
 
 #[tokio::test]

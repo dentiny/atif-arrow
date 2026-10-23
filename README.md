@@ -51,6 +51,11 @@ For a first run, save [the sample](examples/trajectory.json) as `trajectory.json
 and run `cargo run -- trajectory.json`. Output: `1 row, 13 columns`.
 The path is retained in `source_uri`; the input text is retained in `raw_json`.
 
+Message and observation content text is emitted as UTF-8 bytes in Arrow
+`LargeBinary`. Media paths and metadata remain strings; the converter does not
+read image/audio files or select a downstream Blob/compression policy. See the
+[schema contract](docs/schema.md#normalization-and-preservation).
+
 Reading JSONL or cloud objects? The [storage guide](docs/usage.md) uses one reader
 with local, S3, and GCS operators. To inspect actual token/cost values, see
 [the conversion example](examples/README.md#convert-a-local-json-file).

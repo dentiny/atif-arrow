@@ -182,6 +182,7 @@ name = "atif-arrow"
 version = "0.1.0"
 dependencies = [
  "arrow-array",
+ "arrow-cast",
  "arrow-json",
  "arrow-schema",
  "serde",
