@@ -350,6 +350,46 @@ fn batch_builder_requires_flushing_and_can_be_reused() {
 }
 
 #[test]
+fn failed_append_preserves_pending_rows_and_allows_recovery() {
+    use atif_arrow::TrajectoryBatchBuilder;
+
+    let mut builder = TrajectoryBatchBuilder::new(2).unwrap();
+    builder.append_json(DOCUMENT, None, 1).unwrap();
+    assert!(builder.append_json("{", None, 2).is_err());
+    assert!(builder.append_json(DOCUMENT, None, 0).is_err());
+    for (pointer, value) in [
+        ("/final_metrics/total_steps", json!("invalid")),
+        (
+            "/steps/1/message",
+            json!([{"type":"image","source":{"media_type":"audio/wav","path":"missing"}}]),
+        ),
+    ] {
+        let mut invalid: Value = serde_json::from_str(DOCUMENT).unwrap();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        assert!(builder.append_json(&invalid.to_string(), None, 2).is_err());
+    }
+
+    let mut second: Value = serde_json::from_str(DOCUMENT).unwrap();
+    second["steps"][0]["message"] = json!("恢复🙂");
+    second["steps"][1]["metrics"] = Value::Null;
+    second["steps"][1]["is_copied_context"] = json!(true);
+    second["final_metrics"] = Value::Null;
+    let second = second.to_string();
+    builder
+        .append_json(&second, Some("recovered.json"), 2)
+        .unwrap();
+    let batch = builder.flush().unwrap().unwrap();
+    assert_eq!(batch.num_rows(), 2);
+    for (row, input, uri) in [
+        (0, DOCUMENT, None),
+        (1, second.as_str(), Some("recovered.json")),
+    ] {
+        let expected = to_record_batch(&parse_trajectory(input).unwrap(), uri, row + 1).unwrap();
+        assert_eq!(batch.slice(row as usize, 1), expected);
+    }
+}
+
+#[test]
 fn conversion_revalidates_step_rules_after_mutating_parsed_input() {
     for (field, value, expected_field) in [
         ("timestamp", json!("invalid"), "timestamp"),

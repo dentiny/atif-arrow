@@ -46,8 +46,11 @@ features disabled. Enable each storage backend's `services-*` feature in your
 application, such as `services-fs`, `services-s3`, or `services-gcs`.
 
 The reader streams object bytes directly into conversion without an intermediate
-download or per-row batch concatenation. Document text, parsed JSON, normalized JSON,
-and Arrow buffers allocate; conversion is not zero-copy.
+download or per-row batch concatenation. Conversion validates and normalizes each
+row before appending to schema-driven Arrow builders. Text is appended as UTF-8
+bytes directly to `LargeBinaryBuilder`; there is no intermediate decoder schema or
+batch cast. Document text, parsed JSON, normalized values, and Arrow buffers
+allocate; conversion is not zero-copy.
 OpenDAL access may be deferred until `next_batch`, and errors preserve its cause.
 
 ## Harbor Hub behavior

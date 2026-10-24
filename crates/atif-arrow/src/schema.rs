@@ -8,16 +8,6 @@ use DataType::{Boolean, Float64, Int64, UInt64, Utf8};
 /// List elements are non-null; optional lists preserve null versus empty.
 /// The schema is independent of which optional fields appear in the input.
 pub fn trajectory_schema() -> SchemaRef {
-    schema_with_content_text(DataType::LargeBinary)
-}
-
-/// Decode JSON strings as UTF-8 before casting content text to binary. Arrow's
-/// JSON binary decoder otherwise interprets a string as hex-encoded bytes.
-pub(crate) fn json_decoder_schema() -> SchemaRef {
-    schema_with_content_text(DataType::LargeUtf8)
-}
-
-fn schema_with_content_text(text_type: DataType) -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("source_uri", Utf8, true),
         Field::new("source_record_index", UInt64, false),
@@ -25,7 +15,7 @@ fn schema_with_content_text(text_type: DataType) -> SchemaRef {
         Field::new("session_id", Utf8, true),
         Field::new("trajectory_id", Utf8, true),
         Field::new("agent", agent(), false),
-        list("steps", step(&text_type), false),
+        list("steps", step(), false),
         Field::new("notes", Utf8, true),
         Field::new("final_metrics", final_metrics(), true),
         Field::new("continued_trajectory_ref", Utf8, true),
@@ -47,17 +37,17 @@ fn agent() -> DataType {
 }
 
 /// Schema for an ATIF interaction, including ordered content, tool calls, and LLM data.
-fn step(text_type: &DataType) -> DataType {
+fn step() -> DataType {
     record(vec![
         Field::new("step_id", UInt64, false),
         Field::new("timestamp", Utf8, true),
         Field::new("source", Utf8, false),
         Field::new("model_name", Utf8, true),
         json_field("reasoning_effort_json", true),
-        list("message", content_part(text_type), false),
+        list("message", content_part(), false),
         Field::new("reasoning_content", Utf8, true),
         list("tool_calls", tool_call(), true),
-        Field::new("observation", observation(text_type), true),
+        Field::new("observation", observation(), true),
         Field::new("metrics", metrics(), true),
         Field::new("is_copied_context", Boolean, true),
         Field::new("llm_call_count", UInt64, true),
@@ -66,10 +56,10 @@ fn step(text_type: &DataType) -> DataType {
 }
 
 /// Tagged text, image, or audio content; media variants share a nullable source struct.
-fn content_part(text_type: &DataType) -> DataType {
+fn content_part() -> DataType {
     record(vec![
         Field::new("type", Utf8, false),
-        Field::new("text", text_type.clone(), true),
+        Field::new("text", DataType::LargeBinary, true),
         Field::new(
             "source",
             record(vec![
@@ -93,12 +83,12 @@ fn tool_call() -> DataType {
 }
 
 /// Tool or environment results, with references to calls and delegated subagent trajectories.
-fn observation(text_type: &DataType) -> DataType {
+fn observation() -> DataType {
     record(vec![list(
         "results",
         record(vec![
             Field::new("source_call_id", Utf8, true),
-            list("content", content_part(text_type), true),
+            list("content", content_part(), true),
             list(
                 "subagent_trajectory_ref",
                 record(vec![
