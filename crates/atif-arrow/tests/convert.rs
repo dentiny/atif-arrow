@@ -100,10 +100,23 @@ fn preserves_missing_null_and_empty_optional_values() {
             document["steps"][0]["tool_calls"] = value.clone();
         }
         document["steps"][0]["metrics"] = json!({});
+        let result = document["steps"][1]["observation"]["results"][0]
+            .as_object_mut()
+            .unwrap();
+        if let Some(value) = &value {
+            result.insert("content".into(), value.clone());
+        } else {
+            result.remove("content");
+        }
         let parsed = parse_trajectory(&document.to_string()).unwrap();
         let row = output_row(&to_record_batch(&parsed, None, 1).unwrap());
         assert_eq!(row["source_uri"], Value::Null);
-        assert_eq!(row["steps"][0]["tool_calls"], value.unwrap_or(Value::Null));
+        let expected = value.unwrap_or(Value::Null);
+        assert_eq!(row["steps"][0]["tool_calls"], expected);
+        assert_eq!(
+            row["steps"][1]["observation"]["results"][0]["content"],
+            expected
+        );
         assert!(row["steps"][0]["metrics"].is_object());
         assert_eq!(row["steps"][0]["metrics"]["prompt_tokens"], Value::Null);
     }
@@ -189,6 +202,8 @@ fn converts_multimodal_content_and_rejects_invalid_media() {
         &row["steps"][1]["observation"]["results"][0]["content"],
     ] {
         assert_eq!(content.as_array().unwrap().len(), 3);
+        assert_eq!(content[1]["text"], Value::Null);
+        assert_eq!(content[2]["text"], Value::Null);
         assert_eq!(content[1]["source"]["path"], parts[1]["source"]["path"]);
         assert_eq!(content[2]["source"], parts[2]["source"]);
     }
@@ -323,6 +338,10 @@ fn batch_builder_requires_flushing_and_can_be_reused() {
     let batch = builder.flush().unwrap().unwrap();
     assert_eq!(batch.num_rows(), 2);
     assert_eq!(batch.schema(), trajectory_schema());
+    for row in 0..2 {
+        let single = to_record_batch(&parse_trajectory(DOCUMENT).unwrap(), None, row + 1).unwrap();
+        assert_eq!(batch.slice(row as usize, 1), single);
+    }
     assert!(builder.flush().unwrap().is_none());
     builder.append_json(DOCUMENT, None, 3).unwrap();
     let row = output_row(&builder.flush().unwrap().unwrap());
