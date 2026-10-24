@@ -114,6 +114,12 @@ media parts keep null text. The single-document converter, batch builder, and
 serial/parallel readers use the same output schema. Arrow's standard JSON writer
 represents binary values as hex strings, rather than the original readable text.
 
+`Utf8` columns, including `raw_json`, retain 32-bit offsets: each column can
+contain at most 2,147,483,647 bytes per batch. `List` columns have the same limit
+on their total child count. Conversion rejects a row before modifying the batch
+if appending it would exceed an offset limit. Reduce the batch size for large
+trajectories; `LargeBinary` content text alone does not remove these other limits.
+
 The converter does not produce native Arrow temporal types (`Timestamp`, dates,
 times, `Duration`, `Interval`), `Decimal`, `Binary`, `Map`, `Union`, `LargeList`,
 `FixedSizeList`, smaller integer types, or `Float16`/`Float32`. Supporting these

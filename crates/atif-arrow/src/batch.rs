@@ -4,8 +4,8 @@ use arrow_array::{
 };
 
 use crate::{
-    builders::append_object, convert::normalize_trajectory, parse::parse_document,
-    trajectory_schema, ConversionError, ParseError, Trajectory,
+    builders::append_row, convert::normalize_trajectory, parse::parse_document, trajectory_schema,
+    ConversionError, ParseError, Trajectory,
 };
 
 /// Converts JSON documents into Arrow batches without reading from an external source.
@@ -54,8 +54,7 @@ impl TrajectoryBatchBuilder {
         record_index: u64,
     ) -> Result<(), ConversionError> {
         let row = normalize_trajectory(trajectory, raw_json, source_uri, record_index)?;
-        append_object(&mut self.rows, &row);
-        Ok(())
+        append_row(&mut self.rows, &row)
     }
 
     /// Returns the accumulated rows and resets the converter for the next batch.
