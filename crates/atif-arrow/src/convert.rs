@@ -1,12 +1,11 @@
 use arrow_array::RecordBatch;
-use arrow_json::ReaderBuilder;
 use arrow_schema::{DataType, Field, FieldRef, Fields};
 use serde_json::{json, Map, Value};
 
 use crate::{
     trajectory_schema,
     validation::{validate_details, validate_embedded},
-    ConversionError, ParseError, ParsedTrajectory, Trajectory,
+    ConversionError, ParseError, ParsedTrajectory, Trajectory, TrajectoryBatchBuilder,
 };
 
 /// Converts one parsed document into one Arrow row, with caller-supplied source identity.
@@ -17,28 +16,25 @@ pub fn to_record_batch(
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    let encoded = encode_trajectory(
+    let mut builder = TrajectoryBatchBuilder::new(1)?;
+    builder.append_trajectory(
         &parsed.trajectory,
         parsed.raw_json(),
         source_uri,
         source_record_index,
     )?;
-    let mut reader = ReaderBuilder::new(trajectory_schema()).build(encoded.as_bytes())?;
-    reader
-        .next()
-        .ok_or_else(|| {
-            ConversionError::Field(ParseError::new("$", "Arrow decoder returned no row"))
-        })?
-        .map_err(ConversionError::Arrow)
+    Ok(builder
+        .flush()?
+        .expect("one appended trajectory produces a batch"))
 }
 
-/// Validates and encodes a row for the single-row converter and streaming decoder.
-pub(crate) fn encode_trajectory(
+/// Validates and projects a trajectory onto the output schema before any builders mutate.
+pub(crate) fn normalize_trajectory(
     trajectory: &Trajectory,
     raw_json: &str,
     source_uri: Option<&str>,
     source_record_index: u64,
-) -> Result<String, ConversionError> {
+) -> Result<Value, ConversionError> {
     if source_record_index == 0 {
         return Err(ConversionError::Field(ParseError::new(
             "source_record_index",
@@ -54,9 +50,7 @@ pub(crate) fn encode_trajectory(
     row["source_uri"] = json!(source_uri);
     row["source_record_index"] = json!(source_record_index);
     row["raw_json"] = json!(raw_json);
-    // Decode JSON text rather than serializing Value into Arrow's tape: arbitrary-
-    // precision numbers must stay numbers, not Serde's private number representation.
-    Ok(row.to_string())
+    Ok(row)
 }
 
 /// Selects ATIF fields without the caller-supplied provenance columns.
@@ -161,7 +155,7 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         }
         data_type => {
             let valid = match data_type {
-                DataType::Utf8 => value.is_string(),
+                DataType::Utf8 | DataType::LargeBinary => value.is_string(),
                 DataType::Boolean => value.is_boolean(),
                 DataType::Int64 => value.as_i64().is_some(),
                 DataType::UInt64 => value.as_u64().is_some(),

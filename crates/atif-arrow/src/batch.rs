@@ -1,14 +1,16 @@
-use arrow_array::RecordBatch;
-use arrow_json::{reader::Decoder, ReaderBuilder};
+use arrow_array::{
+    builder::{ArrayBuilder, StructBuilder},
+    RecordBatch,
+};
 
 use crate::{
-    convert::encode_trajectory, parse::parse_document, trajectory_schema, ConversionError,
-    ParseError,
+    builders::append_row, convert::normalize_trajectory, parse::parse_document, trajectory_schema,
+    ConversionError, ParseError, Trajectory,
 };
 
 /// Converts JSON documents into Arrow batches without reading from an external source.
 pub struct TrajectoryBatchBuilder {
-    decoder: Decoder,
+    rows: StructBuilder,
     batch_size: usize,
 }
 
@@ -21,13 +23,8 @@ impl TrajectoryBatchBuilder {
                 "batch size must be greater than zero",
             )));
         }
-        let decoder = ReaderBuilder::new(trajectory_schema())
-            .with_batch_size(batch_size)
-            .build_decoder()?;
-        Ok(Self {
-            decoder,
-            batch_size,
-        })
+        let rows = StructBuilder::from_fields(trajectory_schema().fields().clone(), batch_size);
+        Ok(Self { rows, batch_size })
     }
 
     /// Appends one complete document; flush a full batch before adding another row.
@@ -37,21 +34,34 @@ impl TrajectoryBatchBuilder {
         source_uri: Option<&str>,
         record_index: u64,
     ) -> Result<(), ConversionError> {
-        if self.decoder.len() == self.batch_size {
+        if self.rows.len() == self.batch_size {
             return Err(ConversionError::Field(ParseError::new(
                 "batch_size",
                 "batch is full; flush before appending another document",
             )));
         }
         let trajectory = parse_document(input).map_err(ConversionError::Field)?;
-        let encoded = encode_trajectory(&trajectory, input, source_uri, record_index)?;
-        let consumed = self.decoder.decode(encoded.as_bytes())?;
-        debug_assert_eq!(consumed, encoded.len());
-        Ok(())
+        self.append_trajectory(&trajectory, input, source_uri, record_index)
+    }
+
+    /// Callers check capacity before parsing; normalize the whole row before
+    /// appending so invalid input cannot leave partially written Arrow arrays.
+    pub(crate) fn append_trajectory(
+        &mut self,
+        trajectory: &Trajectory,
+        raw_json: &str,
+        source_uri: Option<&str>,
+        record_index: u64,
+    ) -> Result<(), ConversionError> {
+        let row = normalize_trajectory(trajectory, raw_json, source_uri, record_index)?;
+        append_row(&mut self.rows, &row)
     }
 
     /// Returns the accumulated rows and resets the converter for the next batch.
     pub fn flush(&mut self) -> Result<Option<RecordBatch>, ConversionError> {
-        self.decoder.flush().map_err(ConversionError::Arrow)
+        if self.rows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(RecordBatch::from(self.rows.finish())))
     }
 }

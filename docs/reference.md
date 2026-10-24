@@ -46,8 +46,11 @@ features disabled. Enable each storage backend's `services-*` feature in your
 application, such as `services-fs`, `services-s3`, or `services-gcs`.
 
 The reader streams object bytes directly into conversion without an intermediate
-download or per-row batch concatenation. Document text, parsed JSON, normalized JSON,
-and Arrow buffers allocate; conversion is not zero-copy.
+download or per-row batch concatenation. Conversion validates and normalizes each
+row before appending to schema-driven Arrow builders. Text is appended as UTF-8
+bytes directly to `LargeBinaryBuilder`; there is no intermediate decoder schema or
+batch cast. Document text, parsed JSON, normalized values, and Arrow buffers
+allocate; conversion is not zero-copy.
 OpenDAL access may be deferred until `next_batch`, and errors preserve its cause.
 
 ## Harbor Hub behavior
@@ -91,7 +94,8 @@ produces Arrow batches; Lance conversion and IPC export are not implemented.
 
 | Input | Arrow representation |
 | --- | --- |
-| Text | `Utf8` |
+| Message/observation content text | UTF-8 bytes in `LargeBinary` |
+| Other string fields | `Utf8` |
 | Boolean | `Boolean` |
 | Numeric columns | `Int64`, `UInt64`, `Float64` |
 | Nested objects | `Struct` |
@@ -103,6 +107,18 @@ String messages and observations become text content-part lists. Optional nulls
 and empty collections remain distinct; list elements are non-null. Media paths,
 MIME spelling, and subagent/continuation references are preserved. Referenced files
 are not fetched, extracted, or verified. Metrics and identifiers are not synthesized.
+
+`ContentPart.text` is a nullable `LargeBinary` array. Decode its bytes as UTF-8
+when displaying text. Empty strings produce valid zero-length binary values;
+media parts keep null text. The single-document converter, batch builder, and
+serial/parallel readers use the same output schema. Arrow's standard JSON writer
+represents binary values as hex strings, rather than the original readable text.
+
+`Utf8` columns, including `raw_json`, retain 32-bit offsets: each column can
+contain at most 2,147,483,647 bytes per batch. `List` columns have the same limit
+on their total child count. Conversion rejects a row before modifying the batch
+if appending it would exceed an offset limit. Reduce the batch size for large
+trajectories; `LargeBinary` content text alone does not remove these other limits.
 
 The converter does not produce native Arrow temporal types (`Timestamp`, dates,
 times, `Duration`, `Interval`), `Decimal`, `Binary`, `Map`, `Union`, `LargeList`,

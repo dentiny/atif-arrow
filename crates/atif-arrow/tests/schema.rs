@@ -10,6 +10,10 @@ fn schema_avoids_dynamic_types_and_marks_json_payloads() {
 
 /// Checks storage types and JSON annotations throughout the nested schema.
 fn check_field(field: &Field) {
+    if field.name() == "text" {
+        assert_eq!(field.data_type(), &DataType::LargeBinary);
+        assert!(field.is_nullable());
+    }
     if field.name().ends_with("_json") {
         assert_eq!(field.data_type(), &DataType::Utf8);
         assert_eq!(field.metadata()["atif-arrow.encoding"], "json");
@@ -21,6 +25,7 @@ fn check_field(field: &Field) {
             check_field(item);
         }
         DataType::Utf8
+        | DataType::LargeBinary
         | DataType::Int64
         | DataType::UInt64
         | DataType::Float64

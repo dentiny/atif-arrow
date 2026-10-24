@@ -59,7 +59,7 @@ fn step() -> DataType {
 fn content_part() -> DataType {
     record(vec![
         Field::new("type", Utf8, false),
-        Field::new("text", Utf8, true),
+        Field::new("text", DataType::LargeBinary, true),
         Field::new(
             "source",
             record(vec![
