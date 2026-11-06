@@ -60,6 +60,14 @@ Reading JSONL or cloud objects? The [storage guide](docs/usage.md) uses one read
 with local, S3, and GCS operators. To inspect actual token/cost values, see
 [the conversion example](examples/README.md#convert-a-local-json-file).
 
+## Arrow compatibility
+
+The current source checkout uses Arrow 59 (`59.3.0` or newer within that major).
+The published `atif-arrow 0.2.0` uses Arrow 58. Arrow types from different
+major versions cannot be passed directly between crates; consumers of this
+checkout should use Arrow 59 as well. The next release must account for this
+public API compatibility change.
+
 ## Choose a crate
 
 | Crate | Use it for |
