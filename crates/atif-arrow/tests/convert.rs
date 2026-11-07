@@ -329,8 +329,8 @@ fn preserves_subagents_and_validates_nested_documents_and_references() {
 fn batch_builder_requires_flushing_and_can_be_reused() {
     use atif_arrow::TrajectoryBatchBuilder;
 
-    assert!(TrajectoryBatchBuilder::new(0).is_err());
-    let mut builder = TrajectoryBatchBuilder::new(2).unwrap();
+    assert!(TrajectoryBatchBuilder::new(0, None).is_err());
+    let mut builder = TrajectoryBatchBuilder::new(2, None).unwrap();
     for index in 1..=2 {
         builder.append_json(DOCUMENT, None, index).unwrap();
     }
@@ -353,7 +353,7 @@ fn batch_builder_requires_flushing_and_can_be_reused() {
 fn failed_append_preserves_pending_rows_and_allows_recovery() {
     use atif_arrow::TrajectoryBatchBuilder;
 
-    let mut builder = TrajectoryBatchBuilder::new(2).unwrap();
+    let mut builder = TrajectoryBatchBuilder::new(2, None).unwrap();
     builder.append_json(DOCUMENT, None, 1).unwrap();
     assert!(builder.append_json("{", None, 2).is_err());
     assert!(builder.append_json(DOCUMENT, None, 0).is_err());

@@ -11,6 +11,18 @@ Unmodeled fields remain in `additional_fields` and `raw_json`.
 `TrajectoryBatchBuilder` provides `append_json` and `flush` for caller-supplied
 documents; flush a full batch before appending another document.
 
+### Select columns when building batches
+
+`TrajectoryBatchBuilder::new(batch_size, projection)` accepts optional top-level
+column indices from `trajectory_schema()`. Pass `None` for all columns or
+`Some(indices)` for the supplied order, including duplicates. `Some(&[])` keeps
+row counts without columns. Batch size must be positive.
+
+All fields are parsed and validated, including omitted fields. Unselected columns
+do not accumulate Arrow batch data; one complete document is still buffered and
+parsed. This constructor is available in the source checkout and is not part of
+the published `atif-arrow 0.3.0` API.
+
 ## Reader behavior
 
 - `InputFormat::Json` reads one complete document, including pretty-printed JSON.

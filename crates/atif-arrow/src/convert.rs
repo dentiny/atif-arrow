@@ -16,7 +16,7 @@ pub fn to_record_batch(
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    let mut builder = TrajectoryBatchBuilder::new(1)?;
+    let mut builder = TrajectoryBatchBuilder::new(1, None)?;
     builder.append_trajectory(
         &parsed.trajectory,
         parsed.raw_json(),
@@ -34,6 +34,7 @@ pub(crate) fn normalize_trajectory(
     raw_json: &str,
     source_uri: Option<&str>,
     source_record_index: u64,
+    output_fields: &Fields,
 ) -> Result<Value, ConversionError> {
     if source_record_index == 0 {
         return Err(ConversionError::Field(ParseError::new(
@@ -44,13 +45,37 @@ pub(crate) fn normalize_trajectory(
     let document = serde_json::to_value(trajectory)
         .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))?;
     let schema = trajectory_schema();
-    let mut row = normalize_object(document_fields(schema.fields()), &document, "")?;
+    let mut row = Map::new();
+    for field in document_fields(schema.fields()) {
+        let name = input_name(field);
+        let selected = output_fields
+            .iter()
+            .any(|output| output.name() == field.name());
+        let value = document.get(name).unwrap_or(&Value::Null);
+        let normalized = normalize_field(field, value, name, selected)?;
+        if selected {
+            row.insert(field.name().clone(), normalized);
+        }
+    }
     validate_details(trajectory, "").map_err(ConversionError::Field)?;
-    // Add provenance after normalization so raw_json is not copied through both maps.
-    row["source_uri"] = json!(source_uri);
-    row["source_record_index"] = json!(source_record_index);
-    row["raw_json"] = json!(raw_json);
-    Ok(row)
+    // Provenance is already validated; avoid copying raw_json unless selected.
+    for field in output_fields {
+        let value = match field.name().as_str() {
+            "source_uri" => json!(source_uri),
+            "source_record_index" => json!(source_record_index),
+            "raw_json" => json!(raw_json),
+            _ => continue,
+        };
+        row.insert(field.name().clone(), value);
+    }
+    Ok(Value::Object(row))
+}
+
+fn input_name(field: &Field) -> &str {
+    match field.name().as_str() {
+        "atif_schema_version" => "schema_version",
+        name => name.strip_suffix("_json").unwrap_or(name),
+    }
 }
 
 /// Selects ATIF fields without the caller-supplied provenance columns.
@@ -68,32 +93,35 @@ fn normalize_object<'a>(
     fields: impl IntoIterator<Item = &'a FieldRef>,
     value: &Value,
     path: &str,
+    materialize: bool,
 ) -> Result<Value, ConversionError> {
     let object = value
         .as_object()
         .ok_or_else(|| ConversionError::Field(ParseError::new(path, "expected an object")))?;
     let mut output = Map::new();
     for field in fields {
-        let name = match field.name().as_str() {
-            "atif_schema_version" => "schema_version",
-            name => name.strip_suffix("_json").unwrap_or(name),
-        };
+        let name = input_name(field);
         let child_path = if path.is_empty() {
             name.into()
         } else {
             format!("{path}.{name}")
         };
         let value = object.get(name).unwrap_or(&Value::Null);
-        output.insert(
-            field.name().clone(),
-            normalize_field(field, value, &child_path)?,
-        );
+        let normalized = normalize_field(field, value, &child_path, materialize)?;
+        if materialize {
+            output.insert(field.name().clone(), normalized);
+        }
     }
     Ok(Value::Object(output))
 }
 
 /// Normalizes text and JSON payloads, rejecting type mismatches and numeric overflow.
-fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, ConversionError> {
+fn normalize_field(
+    field: &Field,
+    value: &Value,
+    path: &str,
+    materialize: bool,
+) -> Result<Value, ConversionError> {
     if value.is_null() {
         return if field.is_nullable() {
             Ok(Value::Null)
@@ -124,11 +152,15 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
                 let schema = trajectory_schema();
                 for (index, child) in value.as_array().into_iter().flatten().enumerate() {
                     let child_path = format!("{path}[{index}]");
-                    normalize_object(document_fields(schema.fields()), child, &child_path)?;
+                    normalize_object(document_fields(schema.fields()), child, &child_path, false)?;
                     validate_embedded(child, &child_path).map_err(ConversionError::Field)?;
                 }
             }
-            Ok(Value::String(value.to_string()))
+            Ok(if materialize {
+                Value::String(value.to_string())
+            } else {
+                Value::Null
+            })
         } else {
             Err(ConversionError::Field(ParseError::new(
                 path,
@@ -137,19 +169,30 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
         };
     }
     match field.data_type() {
-        DataType::Struct(fields) => normalize_object(fields.iter(), value, path),
+        DataType::Struct(fields) => normalize_object(fields.iter(), value, path, materialize),
         DataType::List(item) => {
             let content = matches!(field.name().as_str(), "message" | "content");
             if content && value.is_string() {
-                return Ok(json!([{"type": "text", "text": value}]));
+                return Ok(if materialize {
+                    json!([{"type": "text", "text": value}])
+                } else {
+                    Value::Null
+                });
             }
             let items = value.as_array().ok_or_else(|| {
                 ConversionError::Field(ParseError::new(path, "expected an array"))
             })?;
-            let mut output = Vec::with_capacity(items.len());
+            let mut output = if materialize {
+                Vec::with_capacity(items.len())
+            } else {
+                Vec::new()
+            };
             for (index, value) in items.iter().enumerate() {
                 let item_path = format!("{path}[{index}]");
-                output.push(normalize_field(item, value, &item_path)?);
+                let normalized = normalize_field(item, value, &item_path, materialize)?;
+                if materialize {
+                    output.push(normalized);
+                }
             }
             Ok(Value::Array(output))
         }
@@ -163,7 +206,11 @@ fn normalize_field(field: &Field, value: &Value, path: &str) -> Result<Value, Co
                 _ => false,
             };
             if valid {
-                Ok(value.clone())
+                Ok(if materialize {
+                    value.clone()
+                } else {
+                    Value::Null
+                })
             } else {
                 Err(ConversionError::Field(ParseError::new(
                     path,
