@@ -179,7 +179,7 @@ checksum = "5161fb43cb8f231f06983cb2b8f9ee9cee14be0b1356d8383398cc0f312800d1"
 
 [[package]]
 name = "atif-arrow"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-json",
@@ -192,14 +192,14 @@ dependencies = [
 
 [[package]]
 name = "atif-arrow-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "atif-arrow",
 ]
 
 [[package]]
 name = "atif-io"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-json",
@@ -1346,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "opendal-service-harborhub"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrow-json",
  "atif-arrow",
