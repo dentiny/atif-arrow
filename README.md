@@ -21,7 +21,7 @@ With Rust and Cargo installed:
 ```sh
 cargo new atif-demo --edition 2021
 cd atif-demo
-cargo add atif-arrow@0.2.0
+cargo add atif-arrow@0.3.0
 ```
 
 Replace `src/main.rs` with:
@@ -68,7 +68,7 @@ with local, S3, and GCS operators. To inspect actual token/cost values, see
 | `atif-io` | Read JSON/JSONL as Arrow batches through OpenDAL or an async input. |
 | `opendal-service-harborhub` | Access known public Harbor Hub result objects through OpenDAL. |
 
-`atif-arrow 0.2.0` is on crates.io. The two I/O crates currently require a local
+`atif-arrow 0.3.0` is on crates.io. The two I/O crates currently require a local
 checkout; their dependencies are shown in the [storage guide](docs/usage.md) and
 [Harbor example](examples/README.md#harbor-hub). Cargo names use hyphens;
 Rust imports use underscores, such as `atif_arrow`.
@@ -84,7 +84,7 @@ Rust imports use underscores, such as `atif_arrow`.
   access, and archive extraction are not implemented. External references are
   retained without fetching their targets.
 
-[API docs](https://docs.rs/atif-arrow/0.2.0/atif_arrow/) ·
+[API docs](https://docs.rs/atif-arrow/0.3.0/atif_arrow/) ·
 [Schema](docs/schema.md) · [Reference](docs/reference.md) · [Examples](examples/README.md)
 
 For development: `cargo test --locked --workspace`. Licensed under [MIT](LICENSE).
