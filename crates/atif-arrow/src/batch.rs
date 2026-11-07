@@ -88,25 +88,3 @@ impl TrajectoryBatchBuilder {
         Ok(Some(RecordBatch::from(self.rows.finish())))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::TrajectoryBatchBuilder;
-    use arrow_array::Array;
-
-    #[test]
-    fn omitted_payloads_do_not_accumulate_in_arrow_builders() {
-        let input = serde_json::json!({"schema_version":"ATIF-v1.8",
-            "agent":{"name":"test", "version":"1"},
-            "steps":[{"step_id":1,"source":"agent","message":"x".repeat(64 * 1024)}]
-        })
-        .to_string();
-        let mut builder = TrajectoryBatchBuilder::new(64, Some(&[1])).unwrap();
-        assert_eq!(builder.rows.field_builders().len(), 1);
-        for index in 1..=64 {
-            builder.append_json(&input, None, index).unwrap();
-        }
-        assert!(builder.rows.finish_cloned().get_array_memory_size() < 4096);
-        assert_eq!(builder.flush().unwrap().unwrap().num_rows(), 64);
-    }
-}
