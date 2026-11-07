@@ -16,7 +16,7 @@ pub fn to_record_batch(
     source_uri: Option<&str>,
     source_record_index: u64,
 ) -> Result<RecordBatch, ConversionError> {
-    let mut builder = TrajectoryBatchBuilder::new(1)?;
+    let mut builder = TrajectoryBatchBuilder::new(1, None)?;
     builder.append_trajectory(
         &parsed.trajectory,
         parsed.raw_json(),

@@ -75,18 +75,14 @@ Rust imports use underscores, such as `atif_arrow`.
 
 ## Scope
 
-`TrajectoryBatchBuilder::new_with_projection(batch_size, indices)` builds only
-the selected top-level columns, in the requested order. Indices refer to
+`TrajectoryBatchBuilder::new(batch_size, projection)` accepts optional top-level
+column indices. `None` selects all columns; `Some(indices)` selects columns in the
+requested order. Indices refer to
 `trajectory_schema()`; an empty projection retains row counts. All ATIF fields
 are still validated, including omitted fields. Unselected columns, including
 `raw_json`, do not accumulate Arrow data across the batch. One complete document
 is still buffered and parsed. This API is not yet available in the published
 `atif-arrow 0.3.0` release.
-
-For a synthetic 64-row batch with 512 KiB messages, compare the `full` and
-`projected` modes of `cargo run -p atif-arrow --example projection_memory -- projected`
-in separate processes with an RSS profiler. The example reports retained Arrow
-bytes; total process memory also includes the parsed document and temporary values.
 
 - **ATIF v1.0–v1.8.** Embedded subagents are validated and retained as JSON.
 - **In-memory Arrow batches.** CLI commands, Python bindings, and built-in

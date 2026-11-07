@@ -16,7 +16,7 @@ fn document() -> Value {
 #[test]
 fn projected_batches_match_full_conversion_including_order_duplicates_and_empty_columns() {
     let input = document().to_string();
-    let mut full = TrajectoryBatchBuilder::new(2).unwrap();
+    let mut full = TrajectoryBatchBuilder::new(2, None).unwrap();
     for index in 1..=2 {
         full.append_json(&input, Some("source"), index).unwrap();
     }
@@ -26,7 +26,7 @@ fn projected_batches_match_full_conversion_including_order_duplicates_and_empty_
         .collect();
     projections.extend([vec![], vec![12, 1, 6, 0], vec![1, 1]]);
     for projection in projections {
-        let mut builder = TrajectoryBatchBuilder::new_with_projection(2, &projection).unwrap();
+        let mut builder = TrajectoryBatchBuilder::new(2, Some(&projection)).unwrap();
         for index in 1..=2 {
             builder.append_json(&input, Some("source"), index).unwrap();
         }
@@ -71,13 +71,13 @@ fn omitted_fields_keep_the_same_validation_errors_and_failed_appends_are_atomic(
             *invalid.pointer_mut(pointer).unwrap() = value;
         }
         let input = invalid.to_string();
-        let expected = TrajectoryBatchBuilder::new(2)
+        let expected = TrajectoryBatchBuilder::new(2, None)
             .unwrap()
             .append_json(&input, None, 2)
             .unwrap_err()
             .to_string();
         for projection in [vec![], vec![1], vec![12]] {
-            let mut builder = TrajectoryBatchBuilder::new_with_projection(2, &projection).unwrap();
+            let mut builder = TrajectoryBatchBuilder::new(2, Some(&projection)).unwrap();
             builder.append_json(&valid.to_string(), None, 1).unwrap();
             assert_eq!(
                 builder
@@ -97,9 +97,6 @@ fn omitted_fields_keep_the_same_validation_errors_and_failed_appends_are_atomic(
 
 #[test]
 fn invalid_projection_and_batch_size_are_rejected() {
-    assert!(TrajectoryBatchBuilder::new_with_projection(0, &[]).is_err());
-    assert!(
-        TrajectoryBatchBuilder::new_with_projection(1, &[trajectory_schema().fields().len()])
-            .is_err()
-    );
+    assert!(TrajectoryBatchBuilder::new(0, Some(&[])).is_err());
+    assert!(TrajectoryBatchBuilder::new(1, Some(&[trajectory_schema().fields().len()])).is_err());
 }

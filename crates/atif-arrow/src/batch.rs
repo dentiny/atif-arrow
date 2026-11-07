@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arrow_array::{
     builder::{ArrayBuilder, StructBuilder},
     RecordBatch,
@@ -17,33 +19,23 @@ pub struct TrajectoryBatchBuilder {
 }
 
 impl TrajectoryBatchBuilder {
-    /// Creates a converter with a positive maximum number of rows per batch.
-    pub fn new(batch_size: usize) -> Result<Self, ConversionError> {
-        Self::with_schema(batch_size, trajectory_schema())
-    }
-
-    /// Creates a converter that builds only the selected top-level columns.
+    /// Creates a converter with a positive batch size and optional column projection.
     ///
-    /// Indices refer to [`trajectory_schema`]. Output follows the supplied order,
-    /// including repeated indices. An empty projection preserves the row count.
-    /// Every document is still fully parsed and validated, including omitted fields.
-    /// Unselected columns do not allocate Arrow builders or accumulate batch data;
-    /// parsing and validation still require memory for one complete document.
-    pub fn new_with_projection(
-        batch_size: usize,
-        projection: &[usize],
-    ) -> Result<Self, ConversionError> {
-        let schema = trajectory_schema().project(projection)?;
-        Self::with_schema(batch_size, std::sync::Arc::new(schema))
-    }
-
-    fn with_schema(batch_size: usize, schema: SchemaRef) -> Result<Self, ConversionError> {
+    /// `None` selects all columns; `Some(&[])` preserves only the row count.
+    /// Indices refer to [`trajectory_schema`] and preserve order and duplicates.
+    /// All fields are parsed and validated; omitted fields do not accumulate batch data.
+    pub fn new(batch_size: usize, projection: Option<&[usize]>) -> Result<Self, ConversionError> {
         if batch_size == 0 {
             return Err(ConversionError::Field(ParseError::new(
                 "batch_size",
                 "batch size must be greater than zero",
             )));
         }
+        let schema = trajectory_schema();
+        let schema = match projection {
+            Some(indices) => Arc::new(schema.project(indices)?),
+            None => schema,
+        };
         let rows = StructBuilder::from_fields(schema.fields().clone(), batch_size);
         Ok(Self {
             rows,
@@ -109,7 +101,7 @@ mod tests {
             "steps":[{"step_id":1,"source":"agent","message":"x".repeat(64 * 1024)}]
         })
         .to_string();
-        let mut builder = TrajectoryBatchBuilder::new_with_projection(64, &[1]).unwrap();
+        let mut builder = TrajectoryBatchBuilder::new(64, Some(&[1])).unwrap();
         assert_eq!(builder.rows.field_builders().len(), 1);
         for index in 1..=64 {
             builder.append_json(&input, None, index).unwrap();

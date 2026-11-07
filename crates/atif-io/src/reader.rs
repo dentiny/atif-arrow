@@ -168,7 +168,7 @@ impl Batch {
             let error = |record_index, source: ConversionError| {
                 ReadError::record(&self.source_uri, record_index, source.into())
             };
-            let mut builder = TrajectoryBatchBuilder::new(self.documents.len())
+            let mut builder = TrajectoryBatchBuilder::new(self.documents.len(), None)
                 .map_err(|source| error(self.first_index, source))?;
             for (record_index, document) in (self.first_index..).zip(&self.documents) {
                 builder
