@@ -1,99 +1,56 @@
 # ATIF Arrow
 
-**Turn agent trajectories into Arrow data.**
+Convert [ATIF](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md)
+agent trajectories into [Apache Arrow](https://arrow.apache.org/) batches for
+analysis and dataset processing.
 
-A Rust library for converting
-[ATIF](https://github.com/harbor-framework/harbor/blob/f9f974aee0d3e52670427bfd298caecb64fdde3a/rfcs/0001-trajectory-format.md)
-(Agent Trajectory Interchange Format) logs into
-[Apache Arrow](https://arrow.apache.org/) `RecordBatch` values. Each trajectory
-becomes one row containing its agent, ordered steps, tool calls, and observations.
+Each trajectory becomes one row with structured agent details, steps, tool calls,
+observations, and metrics. The original JSON, unknown fields, and source identity
+are preserved alongside the converted data. Supports ATIF v1.0–v1.8.
 
-- **Compare runs:** a fixed schema for supplied token/cost metrics and tool usage.
-- **Use your storage:** the same JSON/JSONL reader works with any readable OpenDAL
-  backend, including local files, S3, GCS, and Harbor Hub.
-- **Keep the evidence:** validate during ingestion and retain verbatim JSON,
-  unknown fields, and source provenance.
+## Quick start
 
-## Convert your first file
-
-With Rust and Cargo installed:
+Add the conversion library to your Rust project:
 
 ```sh
-cargo new atif-demo --edition 2021
-cd atif-demo
 cargo add atif-arrow@0.3.0
 ```
 
-Replace `src/main.rs` with:
+Read an ATIF JSON file and convert it to an Arrow `RecordBatch`:
 
 ```rust
 use atif_arrow::{parse_trajectory, to_record_batch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args()
-        .nth(1)
-        .ok_or("usage: atif-demo <trajectory.json>")?;
-    let json = std::fs::read_to_string(&path)?;
-    let parsed = parse_trajectory(&json)?;
-    let batch = to_record_batch(&parsed, Some(&path), 1)?;
+    let json = std::fs::read_to_string("trajectory.json")?;
+    let trajectory = parse_trajectory(&json)?;
+    let batch = to_record_batch(&trajectory, Some("trajectory.json"), 1)?;
     println!("{} row, {} columns", batch.num_rows(), batch.num_columns());
     Ok(())
 }
 ```
 
-Pass an ATIF JSON filepath:
+Use [the sample trajectory](examples/trajectory.json) to try it. The result is one
+row with 13 columns, including the source path and original JSON.
 
-```sh
-cargo run -- /path/to/trajectory.json
-```
+## Read files and cloud storage
 
-For a first run, save [the sample](examples/trajectory.json) as `trajectory.json`
-and run `cargo run -- trajectory.json`. Output: `1 row, 13 columns`.
-The path is retained in `source_uri`; the input text is retained in `raw_json`.
+For JSONL, GZIP, or data in local files, S3, and GCS, use `atif-io` with an OpenDAL
+operator. See the [storage guide](docs/usage.md) for setup and examples.
 
-Message and observation content text is emitted as UTF-8 bytes in Arrow
-`LargeBinary`. Media paths and metadata remain strings; the converter does not
-read image/audio files or select a downstream Blob/compression policy. See the
-[schema contract](docs/schema.md#normalization-and-preservation).
-
-Reading JSONL or cloud objects? The [storage guide](docs/usage.md) uses one reader
-with local, S3, and GCS operators. To inspect actual token/cost values, see
-[the conversion example](examples/README.md#convert-a-local-json-file).
-
-## Choose a crate
-
-| Crate | Use it for |
+| Crate | Use it to |
 | --- | --- |
-| [atif-arrow](https://crates.io/crates/atif-arrow) | Convert documents already supplied by your code. |
-| `atif-io` | Read JSON/JSONL as Arrow batches through OpenDAL or an async input. |
-| `opendal-service-harborhub` | Access known public Harbor Hub result objects through OpenDAL. |
+| [atif-arrow](https://crates.io/crates/atif-arrow) | Validate and convert documents supplied by your application. |
+| [atif-io](crates/atif-io) | Read JSON/JSONL as Arrow batches from storage or an async input. |
+| [opendal-service-harborhub](crates/opendal-service-harborhub) | Read public Harbor Hub result objects by path through OpenDAL. |
 
-`atif-arrow 0.3.0` is on crates.io. The two I/O crates currently require a local
-checkout; their dependencies are shown in the [storage guide](docs/usage.md) and
-[Harbor example](examples/README.md#harbor-hub). Cargo names use hyphens;
-Rust imports use underscores, such as `atif_arrow`.
+The I/O crates are available from a source checkout; the guides show how to add them.
 
-## Scope
+## Learn more
 
-`TrajectoryBatchBuilder::new(batch_size, projection)` accepts optional top-level
-column indices. `None` selects all columns; `Some(indices)` selects columns in the
-requested order. Indices refer to
-`trajectory_schema()`; an empty projection retains row counts. All ATIF fields
-are still validated, including omitted fields. Unselected columns, including
-`raw_json`, do not accumulate Arrow data across the batch. One complete document
-is still buffered and parsed. This API is not yet available in the published
-`atif-arrow 0.3.0` release.
+- [Examples](examples/README.md): convert files and read Harbor Hub objects.
+- [Schema](docs/schema.md): Arrow fields and how ATIF content is represented.
+- [Reference](docs/reference.md): conversion APIs, validation, and reader behavior.
+- [API docs](https://docs.rs/atif-arrow/0.3.0/atif_arrow/).
 
-- **ATIF v1.0–v1.8.** Embedded subagents are validated and retained as JSON.
-- **In-memory Arrow batches.** CLI commands, Python bindings, and built-in
-  Parquet/IPC/Lance export are not implemented.
-- **Batch size limits rows, not bytes.** Individual JSON/JSONL records are buffered
-  in full; full-schema output includes each row's raw JSON.
-- **Harbor Hub requires a public object path.** Discovery, listing, authenticated
-  access, and archive extraction are not implemented. External references are
-  retained without fetching their targets.
-
-[API docs](https://docs.rs/atif-arrow/0.3.0/atif_arrow/) ·
-[Schema](docs/schema.md) · [Reference](docs/reference.md) · [Examples](examples/README.md)
-
-For development: `cargo test --locked --workspace`. Licensed under [MIT](LICENSE).
+Licensed under [MIT](LICENSE).
