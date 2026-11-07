@@ -20,8 +20,7 @@ row counts without columns. Batch size must be positive.
 
 All fields are parsed and validated, including omitted fields. Unselected columns
 do not accumulate Arrow batch data; one complete document is still buffered and
-parsed. This constructor is available in the source checkout and is not part of
-the published `atif-arrow 0.3.0` API.
+parsed. This constructor is available in `atif-arrow 0.4.0` and later.
 
 ## Reader behavior
 

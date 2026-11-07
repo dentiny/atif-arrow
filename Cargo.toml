@@ -3,7 +3,7 @@ members = ["crates/atif-arrow", "crates/atif-io", "crates/atif-arrow-cli", "crat
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 license-file = "LICENSE"
@@ -14,8 +14,8 @@ repository = "https://github.com/dentiny/atif-arrow"
 arrow-array = "59.3.0"
 arrow-json = "59.3.0"
 arrow-schema = "59.3.0"
-atif-arrow = { path = "crates/atif-arrow", version = "0.3.0" }
-atif-io = { path = "crates/atif-io", version = "0.3.0" }
+atif-arrow = { path = "crates/atif-arrow", version = "0.4.0" }
+atif-io = { path = "crates/atif-io", version = "0.4.0" }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 opendal = { version = "0.59.3", default-features = false, features = [
     "executors-tokio",
