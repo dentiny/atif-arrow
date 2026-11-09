@@ -5,7 +5,7 @@
 ```sh
 cargo new atif-demo --edition 2021
 cd atif-demo
-cargo add atif-arrow@0.4.4 arrow-array@59.3.0
+cargo add atif-arrow@0.4.5 arrow-array@59.3.0
 ```
 
 Copy [convert.rs](convert.rs) into `src/main.rs`, then run:
@@ -29,7 +29,7 @@ With a sibling repository checkout, add these dependencies:
 
 ```toml
 [dependencies]
-atif-arrow = "0.4.4"
+atif-arrow = "0.4.5"
 atif-io = { path = "../atif-arrow/crates/atif-io" }
 opendal-service-harborhub = { path = "../atif-arrow/crates/opendal-service-harborhub" }
 arrow-json = "59.3.0"
