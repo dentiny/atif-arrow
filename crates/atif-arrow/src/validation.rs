@@ -190,17 +190,35 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
             .additional_fields
             .get("tool_calls")
             .and_then(Value::as_array);
+        // Keep the allocation-free linear scan for ordinary small tool groups.
+        // Large fan-out steps otherwise scan all calls for every result (O(C*R)).
+        // Build borrowed keys only when a result actually references a call.
+        let mut call_ids: Option<HashSet<&str>> = None;
         for (index, result) in results.into_iter().flatten().enumerate() {
             let result_path = format!("{step_path}.observation.results[{index}]");
             if let Some(parts) = result["content"].as_array() {
                 validate_content(parts, minor, &format!("{result_path}.content"))?;
             }
             if let Some(id) = result["source_call_id"].as_str() {
-                if !calls
-                    .into_iter()
-                    .flatten()
-                    .any(|call| call["tool_call_id"].as_str() == Some(id))
+                let found = if calls.is_some_and(|calls| calls.len() > 8)
+                    && results.is_some_and(|results| results.len() > 8)
                 {
+                    call_ids
+                        .get_or_insert_with(|| {
+                            calls
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|call| call["tool_call_id"].as_str())
+                                .collect()
+                        })
+                        .contains(id)
+                } else {
+                    calls
+                        .into_iter()
+                        .flatten()
+                        .any(|call| call["tool_call_id"].as_str() == Some(id))
+                };
+                if !found {
                     return Err(ParseError::new(
                         format!("{result_path}.source_call_id"),
                         "must reference a tool call in the same step",
