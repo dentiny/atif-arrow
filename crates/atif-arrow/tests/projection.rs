@@ -100,3 +100,46 @@ fn invalid_projection_and_batch_size_are_rejected() {
     assert!(TrajectoryBatchBuilder::new(0, Some(&[])).is_err());
     assert!(TrajectoryBatchBuilder::new(1, Some(&[trajectory_schema().fields().len()])).is_err());
 }
+
+#[test]
+fn sparse_nullable_fields_preserve_nulls_and_required_field_errors() {
+    let sparse = json!({
+        "schema_version": "ATIF-v1.8", "trajectory_id": "sparse",
+        "agent": {"name": "test", "version": "1", "model_name": null},
+        "steps": [{"step_id": 1, "source": "user", "message": "hello", "timestamp": null}]
+    });
+    let mut absent = sparse.clone();
+    absent["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_name");
+    absent["steps"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("timestamp");
+    for projection in [None, Some(vec![]), Some(vec![5, 6])] {
+        let mut batches = Vec::new();
+        for input in [&sparse, &absent] {
+            let mut builder = TrajectoryBatchBuilder::new(2, projection.as_deref()).unwrap();
+            builder.append_json(&input.to_string(), None, 1).unwrap();
+            batches.push(builder.flush().unwrap().unwrap());
+        }
+        // raw_json intentionally differs when it is selected.
+        let columns: Vec<_> = batches[0]
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| (f.name() != "raw_json").then_some(i))
+            .collect();
+        assert_eq!(
+            batches[0].project(&columns).unwrap(),
+            batches[1].project(&columns).unwrap()
+        );
+        let mut invalid = sparse.clone();
+        invalid["agent"]["name"] = Value::Null;
+        let mut builder = TrajectoryBatchBuilder::new(2, projection.as_deref()).unwrap();
+        assert!(builder.append_json(&invalid.to_string(), None, 1).is_err());
+        assert!(builder.flush().unwrap().is_none());
+    }
+}

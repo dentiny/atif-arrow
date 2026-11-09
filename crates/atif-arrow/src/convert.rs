@@ -101,12 +101,20 @@ fn normalize_object<'a>(
     let mut output = Map::new();
     for field in fields {
         let name = input_name(field);
+        let value = object.get(name).unwrap_or(&Value::Null);
+        // Missing optional fields are common in the fixed nested ATIF schema.
+        // They cannot fail normalization, so do not allocate an error path.
+        if value.is_null() && field.is_nullable() {
+            if materialize {
+                output.insert(field.name().clone(), Value::Null);
+            }
+            continue;
+        }
         let child_path = if path.is_empty() {
             name.into()
         } else {
             format!("{path}.{name}")
         };
-        let value = object.get(name).unwrap_or(&Value::Null);
         let normalized = normalize_field(field, value, &child_path, materialize)?;
         if materialize {
             output.insert(field.name().clone(), normalized);
