@@ -190,17 +190,35 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
             .additional_fields
             .get("tool_calls")
             .and_then(Value::as_array);
+        // Keep the allocation-free linear scan for ordinary small tool groups.
+        // Large fan-out steps otherwise scan all calls for every result (O(C*R)).
+        // Build borrowed keys only when a result actually references a call.
+        let mut call_ids: Option<HashSet<&str>> = None;
         for (index, result) in results.into_iter().flatten().enumerate() {
             let result_path = format!("{step_path}.observation.results[{index}]");
             if let Some(parts) = result["content"].as_array() {
                 validate_content(parts, minor, &format!("{result_path}.content"))?;
             }
             if let Some(id) = result["source_call_id"].as_str() {
-                if !calls
-                    .into_iter()
-                    .flatten()
-                    .any(|call| call["tool_call_id"].as_str() == Some(id))
+                let found = if calls.is_some_and(|calls| calls.len() > 8)
+                    && results.is_some_and(|results| results.len() > 8)
                 {
+                    call_ids
+                        .get_or_insert_with(|| {
+                            calls
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|call| call["tool_call_id"].as_str())
+                                .collect()
+                        })
+                        .contains(id)
+                } else {
+                    calls
+                        .into_iter()
+                        .flatten()
+                        .any(|call| call["tool_call_id"].as_str() == Some(id))
+                };
+                if !found {
                     return Err(ParseError::new(
                         format!("{result_path}.source_call_id"),
                         "must reference a tool call in the same step",
@@ -317,4 +335,40 @@ fn validate_content(parts: &[Value], minor: u8, path: &str) -> Result<(), ParseE
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn trajectory(calls: usize, references: &[Option<usize>]) -> Trajectory {
+        serde_json::from_value(json!({
+            "schema_version":"ATIF-v1.8", "agent":{"name":"test","version":"1"},
+            "steps":[{"step_id":1,"source":"agent","message":"tools",
+                "tool_calls":(0..calls).map(|i| json!({"tool_call_id":format!("call-{i}"),"function_name":"echo","arguments":{}})).collect::<Vec<_>>(),
+                "observation":{"results": references.iter().map(|id| {
+                    let mut result = json!({"content":"ok"});
+                    if let Some(id) = id { result["source_call_id"] = json!(format!("call-{id}")); }
+                    result
+                }).collect::<Vec<_>>()}}]
+        })).unwrap()
+    }
+
+    #[test]
+    fn small_and_indexed_steps_preserve_reference_validation() {
+        for calls in [0, 1, 8, 9, 512] {
+            let refs: Vec<_> = (0..calls).rev().map(Some).chain([None, None]).collect();
+            assert!(validate_details(&trajectory(calls, &refs), "").is_ok());
+            let mut invalid_refs = vec![None; 8];
+            invalid_refs.push(Some(calls));
+            let error = validate_details(&trajectory(calls, &invalid_refs), "child").unwrap_err();
+            assert_eq!(
+                error.path,
+                "child.steps[0].observation.results[8].source_call_id"
+            );
+            // Missing IDs remain optional, including steps with no tool calls.
+            assert!(validate_details(&trajectory(calls, &[None]), "").is_ok());
+        }
+    }
 }
