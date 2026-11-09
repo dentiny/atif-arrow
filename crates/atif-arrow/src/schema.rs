@@ -1,13 +1,23 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
 
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use DataType::{Boolean, Float64, Int64, UInt64, Utf8};
+
+static TRAJECTORY_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(build_trajectory_schema);
 
 /// One row per input trajectory document.
 ///
 /// List elements are non-null; optional lists preserve null versus empty.
 /// The schema is independent of which optional fields appear in the input.
+/// Calls share an immutable schema, initialized once for the process.
 pub fn trajectory_schema() -> SchemaRef {
+    Arc::clone(&TRAJECTORY_SCHEMA)
+}
+
+fn build_trajectory_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("source_uri", Utf8, true),
         Field::new("source_record_index", UInt64, false),
