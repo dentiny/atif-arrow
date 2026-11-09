@@ -57,8 +57,16 @@ fn check_offsets(
                 .iter()
                 .zip(typed::<StructBuilder>(builder).field_builders_mut())
             {
-                let children: Vec<_> = values.iter().map(|value| &value[field.name()]).collect();
-                check_offsets(child.as_mut(), field.data_type(), &children)?;
+                if let [value] = values {
+                    // Most structs (including the root) validate one row. Keep
+                    // that child reference on the stack instead of allocating
+                    // a temporary Vec for every field in the nested schema.
+                    check_offsets(child.as_mut(), field.data_type(), &[&value[field.name()]])?;
+                } else {
+                    let children: Vec<_> =
+                        values.iter().map(|value| &value[field.name()]).collect();
+                    check_offsets(child.as_mut(), field.data_type(), &children)?;
+                }
             }
             Ok(())
         }
