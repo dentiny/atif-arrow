@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Field, FieldRef, Fields};
 use serde_json::{json, Map, Value};
@@ -42,8 +44,6 @@ pub(crate) fn normalize_trajectory(
             "expected a one-based index",
         )));
     }
-    let document = serde_json::to_value(trajectory)
-        .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))?;
     let schema = trajectory_schema();
     let mut row = Map::new();
     for field in document_fields(schema.fields()) {
@@ -51,8 +51,27 @@ pub(crate) fn normalize_trajectory(
         let selected = output_fields
             .iter()
             .any(|output| output.name() == field.name());
-        let value = document.get(name).unwrap_or(&Value::Null);
-        let normalized = normalize_field(field, value, name, selected)?;
+        // Borrow extension values directly. Serializing the entire trajectory
+        // cloned every unknown root payload even when it has no Arrow column.
+        // Materialize only the typed envelope field currently being validated.
+        let value = if let Some(value) = trajectory.additional_fields.get(name) {
+            Cow::Borrowed(value)
+        } else {
+            match name {
+                "schema_version" => Cow::Owned(Value::String(trajectory.schema_version.clone())),
+                "session_id" => Cow::Owned(json_value(&trajectory.session_id)?),
+                "trajectory_id" => Cow::Owned(json_value(&trajectory.trajectory_id)?),
+                "agent" => Cow::Owned(json_value(&trajectory.agent)?),
+                "steps" => Cow::Owned(json_value(&trajectory.steps)?),
+                name => Cow::Borrowed(
+                    trajectory
+                        .additional_fields
+                        .get(name)
+                        .unwrap_or(&Value::Null),
+                ),
+            }
+        };
+        let normalized = normalize_field(field, &value, name, selected)?;
         if selected {
             row.insert(field.name().clone(), normalized);
         }
@@ -69,6 +88,11 @@ pub(crate) fn normalize_trajectory(
         row.insert(field.name().clone(), value);
     }
     Ok(Value::Object(row))
+}
+
+fn json_value(value: &impl serde::Serialize) -> Result<Value, ConversionError> {
+    serde_json::to_value(value)
+        .map_err(|error| ConversionError::Field(ParseError::new("$", error.to_string())))
 }
 
 fn input_name(field: &Field) -> &str {

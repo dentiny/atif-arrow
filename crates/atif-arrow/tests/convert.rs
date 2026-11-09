@@ -413,3 +413,21 @@ fn conversion_revalidates_step_rules_after_mutating_parsed_input() {
         Err(ConversionError::Field(_))
     ));
 }
+
+#[test]
+fn conversion_preserves_extension_payloads_and_flattened_field_precedence() {
+    let mut input: Value = serde_json::from_str(DOCUMENT).unwrap();
+    input["unknown_payload"] = json!({"large": "x".repeat(64 * 1024)});
+    let raw = input.to_string();
+    let mut parsed = parse_trajectory(&raw).unwrap();
+    // Trajectory is public and mutable; serde's flattened extension fields
+    // previously took precedence during conversion. Preserve that behavior.
+    parsed
+        .trajectory
+        .additional_fields
+        .insert("trajectory_id".into(), json!("extension-id"));
+    let row = output_row(&to_record_batch(&parsed, None, 1).unwrap());
+    assert_eq!(row["trajectory_id"], "extension-id");
+    assert_eq!(row["raw_json"], raw);
+    assert_eq!(row["steps"].as_array().unwrap().len(), 2);
+}
