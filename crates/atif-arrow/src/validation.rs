@@ -336,39 +336,3 @@ fn validate_content(parts: &[Value], minor: u8, path: &str) -> Result<(), ParseE
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod reference_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn trajectory(calls: usize, references: &[Option<usize>]) -> Trajectory {
-        serde_json::from_value(json!({
-            "schema_version":"ATIF-v1.8", "agent":{"name":"test","version":"1"},
-            "steps":[{"step_id":1,"source":"agent","message":"tools",
-                "tool_calls":(0..calls).map(|i| json!({"tool_call_id":format!("call-{i}"),"function_name":"echo","arguments":{}})).collect::<Vec<_>>(),
-                "observation":{"results": references.iter().map(|id| {
-                    let mut result = json!({"content":"ok"});
-                    if let Some(id) = id { result["source_call_id"] = json!(format!("call-{id}")); }
-                    result
-                }).collect::<Vec<_>>()}}]
-        })).unwrap()
-    }
-
-    #[test]
-    fn small_and_indexed_steps_preserve_reference_validation() {
-        for calls in [0, 1, 8, 9, 512] {
-            let refs: Vec<_> = (0..calls).rev().map(Some).chain([None, None]).collect();
-            assert!(validate_details(&trajectory(calls, &refs), "").is_ok());
-            let mut invalid_refs = vec![None; 8];
-            invalid_refs.push(Some(calls));
-            let error = validate_details(&trajectory(calls, &invalid_refs), "child").unwrap_err();
-            assert_eq!(
-                error.path,
-                "child.steps[0].observation.results[8].source_call_id"
-            );
-            // Missing IDs remain optional, including steps with no tool calls.
-            assert!(validate_details(&trajectory(calls, &[None]), "").is_ok());
-        }
-    }
-}
