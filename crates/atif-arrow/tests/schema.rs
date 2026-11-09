@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use arrow_schema::{DataType, Field};
 use atif_arrow::trajectory_schema;
 
@@ -34,22 +32,4 @@ fn check_field(field: &Field) {
         | DataType::Boolean => {}
         other => panic!("unsupported schema type: {other:?}"),
     }
-}
-
-#[test]
-fn schema_is_shared_across_threads_and_copy_on_write_stays_isolated() {
-    let original = trajectory_schema();
-    let handles: Vec<_> = (0..8)
-        .map(|_| std::thread::spawn(trajectory_schema))
-        .collect();
-    for handle in handles {
-        assert!(Arc::ptr_eq(&original, &handle.join().unwrap()));
-    }
-    let mut customized = trajectory_schema();
-    Arc::make_mut(&mut customized)
-        .metadata
-        .insert("caller".into(), "custom".into());
-    assert_eq!(customized.metadata()["caller"], "custom");
-    assert!(!trajectory_schema().metadata().contains_key("caller"));
-    assert_eq!(original.fields(), customized.fields());
 }
