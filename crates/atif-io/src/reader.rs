@@ -54,7 +54,6 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         })
     }
 
-    /// Reads the next document, keeping partial reads in the input buffer.
     async fn read_document(&mut self) -> Result<Option<String>, BoxError> {
         while !self.done {
             self.done = match self.format {
@@ -77,7 +76,6 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         Ok(None)
     }
 
-    /// Reads up to `batch_size` documents; a read error ends input after them.
     async fn read_batch(&mut self) -> Batch {
         let mut error = None;
         while !self.done && self.documents.len() < self.batch_size {
@@ -120,7 +118,8 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
         })
     }
 
-    /// Yields the same batches and first error as [`into_stream`](Self::into_stream), in order.
+    /// Converts batches on at most `parallelism.max(1)` blocking workers, preserving
+    /// the output order and error behavior of [`into_stream`](Self::into_stream).
     pub fn into_parallel_stream(
         self,
         parallelism: usize,
@@ -148,7 +147,6 @@ impl<R: AsyncBufRead + Unpin> TrajectoryReader<R> {
     }
 }
 
-/// Documents numbered from `first_index`, followed by the read error that ended input.
 struct Batch {
     documents: Vec<String>,
     first_index: u64,
@@ -161,7 +159,7 @@ impl Batch {
         self.documents.is_empty() && self.error.is_none()
     }
 
-    /// Converts the documents, reporting the read error only if they all convert.
+    // Conversion errors take precedence; a read error discards the pending batch.
     fn convert(self) -> Result<Option<RecordBatch>, ReadError> {
         let mut batch = None;
         if !self.documents.is_empty() {
