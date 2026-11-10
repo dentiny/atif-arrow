@@ -37,6 +37,12 @@ fn check_offsets(
     data_type: &DataType,
     values: &[&Value],
 ) -> Result<(), ConversionError> {
+    // Nulls (and empty lists of candidates) cannot grow variable-size
+    // buffers. In particular, absent optional structs need no descendant
+    // offset checks even though appending still creates aligned child slots.
+    if values.iter().all(|value| value.is_null()) {
+        return Ok(());
+    }
     match data_type {
         DataType::Utf8 => check_offset::<i32>(
             typed::<StringBuilder>(builder).values_slice().len(),
