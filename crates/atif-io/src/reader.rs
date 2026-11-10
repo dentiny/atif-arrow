@@ -158,6 +158,7 @@ impl Batch {
         self.documents.is_empty() && self.error.is_none()
     }
 
+    /// Converts the documents, reporting the read error only if they all convert.
     fn convert(self) -> Result<Option<RecordBatch>, ReadError> {
         let mut batch = None;
         if !self.documents.is_empty() {
