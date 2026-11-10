@@ -22,3 +22,7 @@ arrow-json.workspace = true
 [[example]]
 name = "convert"
 path = "../../examples/convert.rs"
+
+[[example]]
+name = "bench_raw_json"
+path = "../../examples/bench_raw_json.rs"

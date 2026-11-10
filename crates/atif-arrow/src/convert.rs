@@ -33,7 +33,6 @@ pub fn to_record_batch(
 /// Validates and projects a trajectory onto the output schema before any builders mutate.
 pub(crate) fn normalize_trajectory(
     trajectory: &Trajectory,
-    raw_json: &str,
     source_uri: Option<&str>,
     source_record_index: u64,
     output_fields: &Fields,
@@ -80,7 +79,6 @@ pub(crate) fn normalize_trajectory(
         let value = match field.name().as_str() {
             "source_uri" => json!(source_uri),
             "source_record_index" => json!(source_record_index),
-            "raw_json" => json!(raw_json),
             _ => continue,
         };
         row.insert(field.name().clone(), value);
