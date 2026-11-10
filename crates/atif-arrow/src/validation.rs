@@ -82,24 +82,18 @@ fn validate_timestamp(step: &Step, path: &str) -> Result<(), ParseError> {
 /// Restricts non-null model, reasoning, tool-call, and metric fields to agent steps.
 fn validate_agent_fields(step: &Step, path: &str) -> Result<(), ParseError> {
     if step.source != StepSource::Agent {
-        for field in [
-            "model_name",
-            "reasoning_effort",
-            "reasoning_content",
-            "tool_calls",
-            "metrics",
-        ] {
-            if step
-                .additional_fields
-                .get(field)
-                .is_some_and(|value| !value.is_null())
-            {
-                return Err(ParseError::new(
-                    format!("{path}.{field}"),
-                    "only allowed on agent steps",
-                ));
-            }
-        }
+        reject_non_null_fields(
+            step,
+            path,
+            &[
+                "model_name",
+                "reasoning_effort",
+                "reasoning_content",
+                "tool_calls",
+                "metrics",
+            ],
+            "only allowed on agent steps",
+        )?;
     }
     Ok(())
 }
@@ -113,17 +107,29 @@ fn validate_llm_fields(step: &Step, path: &str) -> Result<(), ParseError> {
             .and_then(Value::as_u64)
             == Some(0)
     {
-        for field in ["metrics", "reasoning_content"] {
-            if step
-                .additional_fields
-                .get(field)
-                .is_some_and(|value| !value.is_null())
-            {
-                return Err(ParseError::new(
-                    format!("{path}.{field}"),
-                    "not allowed when an agent step has llm_call_count = 0",
-                ));
-            }
+        reject_non_null_fields(
+            step,
+            path,
+            &["metrics", "reasoning_content"],
+            "not allowed when an agent step has llm_call_count = 0",
+        )?;
+    }
+    Ok(())
+}
+
+fn reject_non_null_fields(
+    step: &Step,
+    path: &str,
+    fields: &[&str],
+    message: &str,
+) -> Result<(), ParseError> {
+    for field in fields {
+        if step
+            .additional_fields
+            .get(*field)
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err(ParseError::new(format!("{path}.{field}"), message));
         }
     }
     Ok(())
