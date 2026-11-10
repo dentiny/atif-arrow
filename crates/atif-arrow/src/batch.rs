@@ -61,8 +61,7 @@ impl TrajectoryBatchBuilder {
         self.append_trajectory(&trajectory, input, source_uri, record_index)
     }
 
-    /// Callers check capacity before parsing; normalize the whole row before
-    /// appending so invalid input cannot leave partially written Arrow arrays.
+    // Callers check capacity; normalize before mutating any Arrow arrays.
     pub(crate) fn append_trajectory(
         &mut self,
         trajectory: &Trajectory,
