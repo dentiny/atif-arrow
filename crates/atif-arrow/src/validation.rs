@@ -138,13 +138,7 @@ fn reject_non_null_fields(
 /// Deserializes an embedded document and validates its core fields and relationships.
 pub(crate) fn validate_embedded(value: &Value, path: &str) -> Result<(), ParseError> {
     let trajectory: Trajectory = serde_path_to_error::deserialize(value).map_err(|error| {
-        let mut error = ParseError::new(error.path().to_string(), error.inner().to_string());
-        error.path = if error.path == "$" {
-            path.into()
-        } else {
-            format!("{path}.{}", error.path)
-        };
-        error
+        ParseError::new(error.path().to_string(), error.inner().to_string()).with_prefix(path)
     })?;
     validate_details(&trajectory, path)
 }
@@ -156,10 +150,7 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
     } else {
         format!("{path}.")
     };
-    validate_core(trajectory).map_err(|mut error| {
-        error.path = format!("{prefix}{}", error.path);
-        error
-    })?;
+    validate_core(trajectory).map_err(|error| error.with_prefix(path))?;
     // The exact version spelling was checked by validate_core.
     let minor = trajectory.schema_version.as_bytes()[8] - b'0';
     let embedded = trajectory

@@ -20,6 +20,17 @@ impl ParseError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn with_prefix(mut self, prefix: &str) -> Self {
+        if !prefix.is_empty() {
+            self.path = if self.path == "$" {
+                prefix.into()
+            } else {
+                format!("{prefix}.{}", self.path)
+            };
+        }
+        self
+    }
 }
 
 impl fmt::Display for ParseError {
