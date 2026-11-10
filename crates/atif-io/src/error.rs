@@ -28,7 +28,6 @@ impl ReadError {
 }
 
 impl fmt::Display for ReadError {
-    /// Displays the source, document index, and underlying diagnostic.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBatchSize => write!(f, "batch size must be greater than zero"),
@@ -49,7 +48,6 @@ impl fmt::Display for ReadError {
 }
 
 impl std::error::Error for ReadError {
-    /// Exposes the underlying I/O, parsing, or conversion error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidBatchSize => None,

@@ -23,7 +23,6 @@ impl ParseError {
 }
 
 impl fmt::Display for ParseError {
-    /// Displays both the field location and the reason parsing failed.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.path, self.message)
     }
@@ -39,7 +38,6 @@ pub enum ConversionError {
 }
 
 impl fmt::Display for ConversionError {
-    /// Displays the input location or Arrow's construction diagnostic.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Field(error) => error.fmt(f),
@@ -49,7 +47,6 @@ impl fmt::Display for ConversionError {
 }
 
 impl std::error::Error for ConversionError {
-    /// Exposes the underlying parsing or Arrow error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(match self {
             Self::Field(error) => error,
@@ -59,7 +56,6 @@ impl std::error::Error for ConversionError {
 }
 
 impl From<arrow_schema::ArrowError> for ConversionError {
-    /// Propagates Arrow construction failures without losing their diagnostics.
     fn from(error: arrow_schema::ArrowError) -> Self {
         Self::Arrow(error)
     }
