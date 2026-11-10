@@ -51,9 +51,7 @@ pub(crate) fn normalize_trajectory(
         let selected = output_fields
             .iter()
             .any(|output| output.name() == field.name());
-        // Borrow extension values directly. Serializing the entire trajectory
-        // cloned every unknown root payload even when it has no Arrow column.
-        // Materialize only the typed envelope field currently being validated.
+        // Borrow extension payloads; serialize typed envelope fields individually.
         let value = if let Some(value) = trajectory.additional_fields.get(name) {
             Cow::Borrowed(value)
         } else {
@@ -126,8 +124,7 @@ fn normalize_object<'a>(
     for field in fields {
         let name = input_name(field);
         let value = object.get(name).unwrap_or(&Value::Null);
-        // Missing optional fields are common in the fixed nested ATIF schema.
-        // They cannot fail normalization, so do not allocate an error path.
+        // Missing nullable fields need no error-path allocation.
         if value.is_null() && field.is_nullable() {
             if materialize {
                 output.insert(field.name().clone(), Value::Null);
@@ -179,8 +176,7 @@ fn normalize_field(
         };
         return if valid {
             if field.name() == "subagent_trajectories_json" {
-                // Validate each embedded document with the same field mapping, without
-                // source metadata columns. Keep the original embedded JSON in the output.
+                // Validate embedded fields without changing their original JSON.
                 let schema = trajectory_schema();
                 for (index, child) in value.as_array().into_iter().flatten().enumerate() {
                     let child_path = format!("{path}[{index}]");
