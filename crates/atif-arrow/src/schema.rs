@@ -35,7 +35,6 @@ fn build_trajectory_schema() -> SchemaRef {
     ]))
 }
 
-/// Schema for ATIF agent configuration; tool definitions remain serialized JSON.
 fn agent() -> DataType {
     record(vec![
         Field::new("name", Utf8, false),
@@ -46,7 +45,6 @@ fn agent() -> DataType {
     ])
 }
 
-/// Schema for an ATIF interaction, including ordered content, tool calls, and LLM data.
 fn step() -> DataType {
     record(vec![
         Field::new("step_id", UInt64, false),
@@ -65,7 +63,6 @@ fn step() -> DataType {
     ])
 }
 
-/// Tagged text, image, or audio content; media variants share a nullable source struct.
 fn content_part() -> DataType {
     record(vec![
         Field::new("type", Utf8, false),
@@ -82,7 +79,6 @@ fn content_part() -> DataType {
     ])
 }
 
-/// Schema for a tool invocation; arbitrary argument objects remain serialized JSON.
 fn tool_call() -> DataType {
     record(vec![
         Field::new("tool_call_id", Utf8, false),
@@ -92,7 +88,6 @@ fn tool_call() -> DataType {
     ])
 }
 
-/// Tool or environment results, with references to calls and delegated subagent trajectories.
 fn observation() -> DataType {
     record(vec![list(
         "results",
@@ -115,7 +110,6 @@ fn observation() -> DataType {
     )])
 }
 
-/// Per-step LLM usage and cost, including optional token IDs and token-level logprobs.
 fn metrics() -> DataType {
     record(vec![
         Field::new("prompt_tokens", Int64, true),
@@ -129,7 +123,6 @@ fn metrics() -> DataType {
     ])
 }
 
-/// Trajectory-level totals supplied by the producer; all fields are optional.
 fn final_metrics() -> DataType {
     record(vec![
         Field::new("total_prompt_tokens", Int64, true),
@@ -141,7 +134,6 @@ fn final_metrics() -> DataType {
     ])
 }
 
-/// Groups named fields into an Arrow struct.
 fn record(fields: Vec<Field>) -> DataType {
     DataType::Struct(fields.into())
 }

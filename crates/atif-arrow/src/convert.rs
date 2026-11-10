@@ -74,7 +74,6 @@ pub(crate) fn normalize_trajectory(
         }
     }
     validate_details(trajectory, "").map_err(ConversionError::Field)?;
-    // Provenance is already validated; avoid copying raw_json unless selected.
     for field in output_fields {
         let value = match field.name().as_str() {
             "source_uri" => json!(source_uri),
@@ -98,7 +97,6 @@ fn input_name(field: &Field) -> &str {
     }
 }
 
-/// Selects ATIF fields without the caller-supplied provenance columns.
 fn document_fields(fields: &Fields) -> impl Iterator<Item = &FieldRef> {
     fields.iter().filter(|field| {
         !matches!(
@@ -142,7 +140,6 @@ fn normalize_object<'a>(
     Ok(Value::Object(output))
 }
 
-/// Normalizes text and JSON payloads, rejecting type mismatches and numeric overflow.
 fn normalize_field(
     field: &Field,
     value: &Value,
