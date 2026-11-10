@@ -14,10 +14,30 @@ use crate::ConversionError;
 pub(crate) fn append_row(
     builder: &mut StructBuilder,
     value: &Value,
+    raw_json: &str,
 ) -> Result<(), ConversionError> {
     let data_type = DataType::Struct(builder.fields().clone());
     check_offsets(builder, &data_type, &[value])?;
-    append_object(builder, value);
+    // The original document is borrowed from the caller. Check its offset
+    // before mutating any column, then copy it directly into Arrow rather than
+    // allocating an intermediate JSON string of the entire input document.
+    let fields = builder.fields().clone();
+    for (field, child) in fields.iter().zip(builder.field_builders_mut()) {
+        if field.name() == "raw_json" {
+            check_offset::<i32>(
+                typed::<StringBuilder>(child.as_mut()).values_slice().len(),
+                std::iter::once(raw_json.len()),
+            )?;
+        }
+    }
+    for (field, child) in fields.iter().zip(builder.field_builders_mut()) {
+        if field.name() == "raw_json" {
+            typed::<StringBuilder>(child.as_mut()).append_value(raw_json);
+        } else {
+            append_value(child.as_mut(), field.data_type(), &value[field.name()]);
+        }
+    }
+    builder.append(true);
     Ok(())
 }
 

@@ -69,14 +69,8 @@ impl TrajectoryBatchBuilder {
         source_uri: Option<&str>,
         record_index: u64,
     ) -> Result<(), ConversionError> {
-        let row = normalize_trajectory(
-            trajectory,
-            raw_json,
-            source_uri,
-            record_index,
-            self.schema.fields(),
-        )?;
-        append_row(&mut self.rows, &row)
+        let row = normalize_trajectory(trajectory, source_uri, record_index, self.schema.fields())?;
+        append_row(&mut self.rows, &row, raw_json)
     }
 
     /// Returns the accumulated rows and resets the converter for the next batch.
