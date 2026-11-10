@@ -5,7 +5,6 @@ use time::{format_description::well_known::Iso8601, Date, OffsetDateTime, Primit
 
 use crate::{Message, ParseError, Step, StepSource, Trajectory};
 
-/// Validates supported versions, legacy session identity, and step invariants.
 pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
     match trajectory.schema_version.as_str() {
         "ATIF-v1.0" | "ATIF-v1.1" | "ATIF-v1.2" | "ATIF-v1.3" | "ATIF-v1.4" | "ATIF-v1.5"
@@ -44,7 +43,6 @@ pub(crate) fn validate_core(trajectory: &Trajectory) -> Result<(), ParseError> {
     Ok(())
 }
 
-/// Validates a non-null timestamp while preserving its original text and timezone.
 fn validate_timestamp(step: &Step, path: &str) -> Result<(), ParseError> {
     let Some(value) = step
         .additional_fields
@@ -79,7 +77,6 @@ fn validate_timestamp(step: &Step, path: &str) -> Result<(), ParseError> {
     Ok(())
 }
 
-/// Restricts non-null model, reasoning, tool-call, and metric fields to agent steps.
 fn validate_agent_fields(step: &Step, path: &str) -> Result<(), ParseError> {
     if step.source != StepSource::Agent {
         reject_non_null_fields(
@@ -98,7 +95,6 @@ fn validate_agent_fields(step: &Step, path: &str) -> Result<(), ParseError> {
     Ok(())
 }
 
-/// Forbids metrics and reasoning content on agent steps that make no LLM calls.
 fn validate_llm_fields(step: &Step, path: &str) -> Result<(), ParseError> {
     if step.source == StepSource::Agent
         && step
@@ -135,7 +131,6 @@ fn reject_non_null_fields(
     Ok(())
 }
 
-/// Deserializes an embedded document and validates its core fields and relationships.
 pub(crate) fn validate_embedded(value: &Value, path: &str) -> Result<(), ParseError> {
     let trajectory: Trajectory = serde_path_to_error::deserialize(value).map_err(|error| {
         ParseError::new(error.path().to_string(), error.inner().to_string()).with_prefix(path)
