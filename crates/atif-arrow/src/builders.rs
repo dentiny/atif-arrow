@@ -18,9 +18,7 @@ pub(crate) fn append_row(
 ) -> Result<(), ConversionError> {
     let data_type = DataType::Struct(builder.fields().clone());
     check_offsets(builder, &data_type, &[value])?;
-    // The original document is borrowed from the caller. Check its offset
-    // before mutating any column, then copy it directly into Arrow rather than
-    // allocating an intermediate JSON string of the entire input document.
+    // Check raw_json separately: it bypasses the normalized JSON row.
     let fields = builder.fields().clone();
     for (field, child) in fields.iter().zip(builder.field_builders_mut()) {
         if field.name() == "raw_json" {
@@ -57,9 +55,7 @@ fn check_offsets(
     data_type: &DataType,
     values: &[&Value],
 ) -> Result<(), ConversionError> {
-    // Nulls (and empty lists of candidates) cannot grow variable-size
-    // buffers. In particular, absent optional structs need no descendant
-    // offset checks even though appending still creates aligned child slots.
+    // Nulls create child slots but do not grow variable-size buffers.
     if values.iter().all(|value| value.is_null()) {
         return Ok(());
     }
@@ -84,9 +80,7 @@ fn check_offsets(
                 .zip(typed::<StructBuilder>(builder).field_builders_mut())
             {
                 if let [value] = values {
-                    // Most structs (including the root) validate one row. Keep
-                    // that child reference on the stack instead of allocating
-                    // a temporary Vec for every field in the nested schema.
+                    // Avoid a temporary Vec for the usual single-row case.
                     check_offsets(child.as_mut(), field.data_type(), &[&value[field.name()]])?;
                 } else {
                     let children: Vec<_> =
