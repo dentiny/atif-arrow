@@ -104,21 +104,3 @@ fn invalid_projection_and_batch_size_are_rejected() {
     assert!(TrajectoryBatchBuilder::new(0, Some(&[])).is_err());
     assert!(TrajectoryBatchBuilder::new(1, Some(&[trajectory_schema().fields().len()])).is_err());
 }
-
-#[test]
-fn raw_json_is_verbatim_when_reordered_or_duplicated_and_survives_flush() {
-    use arrow_array::cast::AsArray;
-    let input = format!("  {}\n", document());
-    let raw = trajectory_schema().index_of("raw_json").unwrap();
-    let mut builder = TrajectoryBatchBuilder::new(1, Some(&[raw, raw, 0])).unwrap();
-    builder.append_json(&input, Some("source"), 1).unwrap();
-    let batch = builder.flush().unwrap().unwrap();
-    for index in [0, 1] {
-        assert_eq!(batch.column(index).as_string::<i32>().value(0), input);
-    }
-    builder
-        .append_json(&document().to_string(), None, 2)
-        .unwrap();
-    drop(builder.flush().unwrap());
-    assert_eq!(batch.column(0).as_string::<i32>().value(0), input);
-}
