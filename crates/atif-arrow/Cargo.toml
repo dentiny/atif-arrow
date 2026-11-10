@@ -22,3 +22,8 @@ arrow-json.workspace = true
 [[example]]
 name = "convert"
 path = "../../examples/convert.rs"
+
+[[bench]]
+name = "append_sparse"
+path = "../../benches/append_sparse.rs"
+harness = false
