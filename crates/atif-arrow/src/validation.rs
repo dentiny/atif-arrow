@@ -196,9 +196,7 @@ pub(crate) fn validate_details(trajectory: &Trajectory, path: &str) -> Result<()
             .additional_fields
             .get("tool_calls")
             .and_then(Value::as_array);
-        // Keep the allocation-free linear scan for ordinary small tool groups.
-        // Large fan-out steps otherwise scan all calls for every result (O(C*R)).
-        // Build borrowed keys only when a result actually references a call.
+        // Small groups scan linearly; large groups lazily index referenced call IDs.
         let mut call_ids: Option<HashSet<&str>> = None;
         for (index, result) in results.into_iter().flatten().enumerate() {
             let result_path = format!("{step_path}.observation.results[{index}]");
