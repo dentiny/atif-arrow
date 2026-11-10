@@ -21,26 +21,29 @@ fn projected_batches_match_full_conversion_including_order_duplicates_and_empty_
         full.append_json(&input, Some("source"), index).unwrap();
     }
     let full = full.flush().unwrap().unwrap();
-    let mut projections: Vec<Vec<usize>> = (0..trajectory_schema().fields().len())
-        .map(|index| vec![index])
+    let mut projections: Vec<Option<Vec<usize>>> = (0..trajectory_schema().fields().len())
+        .map(|index| Some(vec![index]))
         .collect();
-    projections.extend([vec![], vec![12, 1, 6, 0], vec![1, 1]]);
+    projections.extend([
+        None,
+        Some(vec![]),
+        Some(vec![12, 1, 6, 0]),
+        Some(vec![1, 1]),
+    ]);
     for projection in projections {
-        let mut builder = TrajectoryBatchBuilder::new(2, Some(&projection)).unwrap();
+        let expected = match &projection {
+            Some(indices) => full.project(indices).unwrap(),
+            None => full.clone(),
+        };
+        let mut builder = TrajectoryBatchBuilder::new(2, projection.as_deref()).unwrap();
         for index in 1..=2 {
             builder.append_json(&input, Some("source"), index).unwrap();
         }
         assert!(builder.append_json(&input, None, 3).is_err());
-        assert_eq!(
-            builder.flush().unwrap().unwrap(),
-            full.project(&projection).unwrap()
-        );
+        assert_eq!(builder.flush().unwrap().unwrap(), expected);
         assert!(builder.flush().unwrap().is_none());
         builder.append_json(&input, Some("source"), 1).unwrap();
-        assert_eq!(
-            builder.flush().unwrap().unwrap(),
-            full.slice(0, 1).project(&projection).unwrap()
-        );
+        assert_eq!(builder.flush().unwrap().unwrap(), expected.slice(0, 1));
     }
 }
 
@@ -97,6 +100,7 @@ fn omitted_fields_keep_the_same_validation_errors_and_failed_appends_are_atomic(
 
 #[test]
 fn invalid_projection_and_batch_size_are_rejected() {
+    assert!(TrajectoryBatchBuilder::new(0, None).is_err());
     assert!(TrajectoryBatchBuilder::new(0, Some(&[])).is_err());
     assert!(TrajectoryBatchBuilder::new(1, Some(&[trajectory_schema().fields().len()])).is_err());
 }
