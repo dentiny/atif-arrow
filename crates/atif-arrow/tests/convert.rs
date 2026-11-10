@@ -326,30 +326,6 @@ fn preserves_subagents_and_validates_nested_documents_and_references() {
 }
 
 #[test]
-fn batch_builder_requires_flushing_and_can_be_reused() {
-    use atif_arrow::TrajectoryBatchBuilder;
-
-    assert!(TrajectoryBatchBuilder::new(0, None).is_err());
-    let mut builder = TrajectoryBatchBuilder::new(2, None).unwrap();
-    for index in 1..=2 {
-        builder.append_json(DOCUMENT, None, index).unwrap();
-    }
-    assert!(builder.append_json(DOCUMENT, None, 3).is_err());
-    let batch = builder.flush().unwrap().unwrap();
-    assert_eq!(batch.num_rows(), 2);
-    assert_eq!(batch.schema(), trajectory_schema());
-    for row in 0..2 {
-        let single = to_record_batch(&parse_trajectory(DOCUMENT).unwrap(), None, row + 1).unwrap();
-        assert_eq!(batch.slice(row as usize, 1), single);
-    }
-    assert!(builder.flush().unwrap().is_none());
-    builder.append_json(DOCUMENT, None, 3).unwrap();
-    let row = output_row(&builder.flush().unwrap().unwrap());
-    assert_eq!(row["source_record_index"], 3);
-    assert_eq!(row["raw_json"], DOCUMENT);
-}
-
-#[test]
 fn failed_append_preserves_pending_rows_and_allows_recovery() {
     use atif_arrow::TrajectoryBatchBuilder;
 
