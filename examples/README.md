@@ -2,13 +2,12 @@
 
 ## Convert a local JSON file
 
-These examples use a sibling checkout of this repository for Arrow 58 support;
-the published `atif-arrow` 0.4.6 release uses Arrow 59.
+These examples target the 0.5 release series with Arrow 58.
 
 ```sh
 cargo new atif-demo --edition 2021
 cd atif-demo
-cargo add atif-arrow --path ../atif-arrow/crates/atif-arrow
+cargo add atif-arrow@0.5
 cargo add arrow-array@58
 ```
 
@@ -29,13 +28,13 @@ and GCS operators. Select a backend and pass an object path; conversion stays th
 
 ## Harbor Hub
 
-With a sibling repository checkout, add these dependencies:
+Add these dependencies:
 
 ```toml
 [dependencies]
-atif-arrow = { path = "../atif-arrow/crates/atif-arrow" }
-atif-io = { path = "../atif-arrow/crates/atif-io" }
-opendal-service-harborhub = { path = "../atif-arrow/crates/opendal-service-harborhub" }
+atif-arrow = "0.5"
+atif-io = "0.5"
+opendal-service-harborhub = "0.5"
 arrow-json = "58"
 opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio", "http-transport-reqwest"] }
 serde_json = "1"
