@@ -2,10 +2,13 @@
 
 ## Convert a local JSON file
 
+These examples target the 0.5 release series with Arrow 58.
+
 ```sh
 cargo new atif-demo --edition 2021
 cd atif-demo
-cargo add atif-arrow@0.4.6 arrow-array@59.3.0
+cargo add atif-arrow@0.5
+cargo add arrow-array@58
 ```
 
 Copy [convert.rs](convert.rs) into `src/main.rs`, then run:
@@ -25,14 +28,14 @@ and GCS operators. Select a backend and pass an object path; conversion stays th
 
 ## Harbor Hub
 
-With a sibling repository checkout, add these dependencies:
+Add these dependencies:
 
 ```toml
 [dependencies]
-atif-arrow = "0.4.6"
-atif-io = { path = "../atif-arrow/crates/atif-io" }
-opendal-service-harborhub = { path = "../atif-arrow/crates/opendal-service-harborhub" }
-arrow-json = "59.3.0"
+atif-arrow = "0.5"
+atif-io = "0.5"
+opendal-service-harborhub = "0.5"
+arrow-json = "58"
 opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio", "http-transport-reqwest"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt"] }

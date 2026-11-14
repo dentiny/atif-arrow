@@ -13,7 +13,7 @@ are preserved alongside the converted data. Supports ATIF v1.0–v1.8.
 Add the conversion library to your Rust project:
 
 ```sh
-cargo add atif-arrow@0.4.6
+cargo add atif-arrow@0.5
 ```
 
 Read an ATIF JSON file and convert it to an Arrow `RecordBatch`:
@@ -44,13 +44,13 @@ operator. See the [storage guide](docs/usage.md) for setup and examples.
 | [atif-io](crates/atif-io) | Read JSON/JSONL as Arrow batches from storage or an async input. |
 | [opendal-service-harborhub](crates/opendal-service-harborhub) | Read public Harbor Hub result objects by path through OpenDAL. |
 
-The I/O crates are available from a source checkout; the guides show how to add them.
+The I/O crates share the 0.5 release series; the guides show how to add them.
 
 ## Learn more
 
 - [Examples](examples/README.md): convert files and read Harbor Hub objects.
 - [Schema](docs/schema.md): Arrow fields and how ATIF content is represented.
 - [Reference](docs/reference.md): conversion APIs, validation, and reader behavior.
-- [API docs](https://docs.rs/atif-arrow/0.4.6/atif_arrow/).
+- [API docs](https://docs.rs/atif-arrow/0.5.0/atif_arrow/).
 
 Licensed under [MIT](LICENSE).

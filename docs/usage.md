@@ -5,12 +5,12 @@ stays the same for local files, S3, GCS, or another readable OpenDAL backend.
 
 ## Setup
 
-`atif-io` currently requires a local checkout alongside your application.
+Use the `atif-io` 0.5 release series with Arrow 58.
 These dependencies enable all three examples; remove unused `services-*` features.
 
 ```toml
 [dependencies]
-atif-io = { path = "../atif-arrow/crates/atif-io" }
+atif-io = "0.5"
 opendal = { version = "0.59.3", default-features = false, features = [
     "services-fs", "services-s3", "services-gcs",
     "executors-tokio", "http-transport-reqwest",
