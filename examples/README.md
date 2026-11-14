@@ -9,7 +9,7 @@ the published `atif-arrow` 0.4.6 release uses Arrow 59.
 cargo new atif-demo --edition 2021
 cd atif-demo
 cargo add atif-arrow --path ../atif-arrow/crates/atif-arrow
-cargo add arrow-array@58.4.1
+cargo add arrow-array@58
 ```
 
 Copy [convert.rs](convert.rs) into `src/main.rs`, then run:
@@ -36,7 +36,7 @@ With a sibling repository checkout, add these dependencies:
 atif-arrow = { path = "../atif-arrow/crates/atif-arrow" }
 atif-io = { path = "../atif-arrow/crates/atif-io" }
 opendal-service-harborhub = { path = "../atif-arrow/crates/opendal-service-harborhub" }
-arrow-json = "58.4.1"
+arrow-json = "58"
 opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio", "http-transport-reqwest"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt"] }
