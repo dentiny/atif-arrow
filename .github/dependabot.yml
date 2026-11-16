@@ -4,7 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    groups:
-      arrow:
-        patterns:
-          - "arrow-*"
+    # Keep these related crates on manually coordinated versions.
+    ignore:
+      - dependency-name: "arrow"
+      - dependency-name: "arrow-*"
+      - dependency-name: "parquet"
+      - dependency-name: "parquet-*"
+      - dependency-name: "datafusion"
+      - dependency-name: "datafusion-*"
+      - dependency-name: "lance"
+      - dependency-name: "lance-*"
