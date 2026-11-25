@@ -2,12 +2,12 @@
 
 ## Convert a local JSON file
 
-These examples target the 0.5 release series with Arrow 58.
+These examples target the 0.6 release series with Arrow 59.
 
 ```sh
 cargo new atif-demo --edition 2021
 cd atif-demo
-cargo add atif-arrow@0.5
+cargo add atif-arrow@0.6
 cargo add arrow-array@58
 ```
 
@@ -33,7 +33,7 @@ Add these dependencies:
 ```toml
 [dependencies]
 atif-arrow = "0.5"
-atif-io = "0.5"
+atif-io = "0.6"
 opendal-service-harborhub = "0.5"
 arrow-json = "58"
 opendal = { version = "0.59.3", default-features = false, features = ["executors-tokio", "http-transport-reqwest"] }
