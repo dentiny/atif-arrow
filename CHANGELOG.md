@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 - 2026-11-25
+
+- Upgrade Arrow dependencies to 59.2 so Arrow arrays and schemas are compatible with the Arrow 59 ecosystem.
+
 ## 0.5.2 - 2026-11-16
 
 - Update the dependency lockfile for flate2, Tokio, serde_json, and async-compression.

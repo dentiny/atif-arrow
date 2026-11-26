@@ -5,12 +5,12 @@ stays the same for local files, S3, GCS, or another readable OpenDAL backend.
 
 ## Setup
 
-Use the `atif-io` 0.5 release series with Arrow 58.
+Use the `atif-io` 0.6 release series with Arrow 59.
 These dependencies enable all three examples; remove unused `services-*` features.
 
 ```toml
 [dependencies]
-atif-io = "0.5"
+atif-io = "0.6"
 opendal = { version = "0.59.3", default-features = false, features = [
     "services-fs", "services-s3", "services-gcs",
     "executors-tokio", "http-transport-reqwest",
